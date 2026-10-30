@@ -9,6 +9,7 @@ READ
   profile [who]                      key<TAB>value lines
   friends [who] [-n 30]              name, ref, mutual friends
   groups [-n 100] [--urls]           groups you have joined: name, ref, privacy and size
+  members <group> [-n 200] [--urls]  people in a group: name, ref, role or join info
   search <q> [--type people|pages|groups|posts|events] [-n 10]
   notifs [-n 15]                     time, !=unread, text, ref
 MESSENGER
@@ -22,6 +23,7 @@ ACT
   comment <post> <text>
   react <post> [like|love|care|haha|wow|sad|angry|none]
   delete <post>                      your own posts only
+  friend-add <who>                   send a friend request (reports existing friends / pending requests)
 BROWSER (fallback; named tabs are separate from normal commands)
   page <name> open <url> | snapshot [filter]   bounded text + refs; max 6 pages
   page <name> click <ref> | fill <ref> <text> | key <Ctrl+a|Enter|...> | scroll <dx> <dy>

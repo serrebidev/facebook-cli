@@ -1,6 +1,6 @@
 (()=>{
  const F=window.__fb;
- const {sleep,clean,vtext,waitFor,canon,groupPath,TIME,SPON,ACT,trunc,scrollerOf,num}=F;
+ const {sleep,clean,vtext,waitFor,canon,groupPath,profilePath,TIME,SPON,ACT,trunc,scrollerOf,num}=F;
  const main=()=>document.querySelector('[role=main]');
  const tab=s=>String(s==null?'':s).replace(/[\t\r\n]+/g,' ');
  const abs=h=>{try{const u=new URL(h,location.href);return u.pathname+u.search}catch(e){return h}};
@@ -67,6 +67,25 @@
     byPath.set(p,cur);
    }
    return [...byPath.entries()].map(([p,g])=>({k:p,v:[g.name,p,trunc(g.info.join(' · '),120)]}));
+  });
+  return {rows:rows.map(r=>r.v)};
+ };
+ F.groupMembers=async(n)=>{
+  const ok=await waitFor(()=>document.querySelector('[role=main] a[href]'),12000);
+  if(!ok)return {rows:[],note:'no members visible'};
+  await sleep(600);
+  const rows=await gather(n,()=>{
+   const byPath=new Map();
+   for(const a of document.querySelectorAll('[role=main] a[href]')){
+    const p=profilePath(a.getAttribute('href'));if(!p)continue;
+    const nm=clean(a.innerText||'');if(!nm||nm.length>80)continue;
+    const block=a.closest('[role=listitem]')||a.closest('[role=article]')||(a.parentElement&&a.parentElement.parentElement);
+    const chunks=(block?vtext(block):[nm]).map(clean).filter(Boolean);
+    const cur=byPath.get(p)||{name:nm,info:[]};
+    for(const c of chunks)if(c!==nm&&c!==cur.name&&!cur.info.includes(c)&&!/^(Add friend|Message|Follow|Friends|See all)$/i.test(c))cur.info.push(c);
+    byPath.set(p,cur);
+   }
+   return [...byPath.entries()].map(([p,m])=>({k:p,v:[m.name,{r:'u',v:p},trunc(m.info.join(' · '),120)]}));
   });
   return {rows:rows.map(r=>r.v)};
  };
@@ -138,9 +157,10 @@
    const body=c.slice(ti<0?1:ti+1,end<0?c.length:end).filter(x=>!/^(của tác giả|Author|Auteur|Top fan|Người hâm mộ.*)$/i.test(x)).join(' ');
    const lab=a.getAttribute('aria-label')||'';
    const nested=!!a.parentElement.closest('[role=article][aria-label]');
-   return {k:lab+body,v:[(nested?'  ↳':'')+c[0],ti>=0?c[ti]:'',trunc(body,300)]};
+   const ref=[...a.querySelectorAll('a[href]')].map(x=>profilePath(x.getAttribute('href'))).find(Boolean)||'';
+   return {k:lab+body,ref,v:[(nested?'  ↳':'')+c[0],ti>=0?c[ti]:'',trunc(body,300)]};
   }),20000,scEl);
-  for(const c of com)lines.push('c\t'+c.v.map(tab).join('\t'));
+  for(const c of com){if(c.ref)lines.push('cu\t'+tab(c.ref));lines.push('c\t'+c.v.map(tab).join('\t'));}
   return {lines};
  };
 })();
