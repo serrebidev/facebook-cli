@@ -177,6 +177,25 @@
   await sleep(300);scan();
   return {rows:[...acc].slice(0,n).map(([k,g])=>[g.name,k,trunc(g.info.join(' · '),120)])};
  };
+ F.groupMembers=async(n)=>{
+  const ok=await waitFor(()=>document.querySelector('[role=main] a[href]'),12000);
+  if(!ok)return {rows:[],note:'no members visible'};
+  await sleep(600);
+  const rows=await gather(n,()=>{
+   const byPath=new Map();
+   for(const a of document.querySelectorAll('[role=main] a[href]')){
+    const p=profilePath(a.getAttribute('href'));if(!p)continue;
+    const nm=clean(a.innerText||'');if(!nm||nm.length>80)continue;
+    const block=a.closest('[role=listitem]')||a.closest('[role=article]')||(a.parentElement&&a.parentElement.parentElement);
+    const chunks=(block?vtext(block):[nm]).map(clean).filter(Boolean);
+    const cur=byPath.get(p)||{name:nm,info:[]};
+    for(const c of chunks)if(c!==nm&&c!==cur.name&&!cur.info.includes(c)&&!/^(Add friend|Message|Follow|Friends|See all)$/i.test(c))cur.info.push(c);
+    byPath.set(p,cur);
+   }
+   return [...byPath.entries()].map(([p,m])=>({k:p,v:[m.name,{r:'u',v:p},trunc(m.info.join(' · '),120)]}));
+  });
+  return {rows:rows.map(r=>r.v)};
+ };
  F.notifs=async(n)=>{
   const ok=await waitFor(()=>document.querySelector('[role=main] [role=list] [role=listitem] a[href]')||document.querySelector('[role=list] [role=listitem] a[href]'),12000);
   if(!ok)return {rows:[],note:'no notifications'};
