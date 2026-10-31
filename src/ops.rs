@@ -261,18 +261,66 @@ pub async fn profile_path(d: &Daemon, b: &std::sync::Arc<Browser>, who: &str) ->
     r
 }
 
+/// A group spec (ref, url, path, vanity or id) → "/groups/<id>".
+/// Rejects the reserved /groups/ sections so "joins" can never become a group.
+pub fn group_path(d: &Daemon, spec: &str) -> Res<String> {
+    let path = if let Some(p) = d.refs.get(spec) {
+        p
+    } else if spec.starts_with('/') || spec.starts_with("http") {
+        fb_path(spec).ok_or_else(|| format!("not a facebook url: {spec}"))?
+    } else {
+        format!("/groups/{}", spec.trim_start_matches('@'))
+    };
+    let seg = path
+        .strip_prefix("/groups/")
+        .and_then(|rest| rest.split('/').next())
+        .filter(|s| {
+            !s.is_empty()
+                && !matches!(
+                    *s,
+                    "feed" | "discover" | "joins" | "create" | "search" | "yourgroups"
+                )
+        })
+        .ok_or_else(|| format!("'{spec}' is not a group"))?;
+    Ok(format!("/groups/{seg}"))
+}
+
 pub async fn search(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
     let a = parse(args, &["type"], &[])?;
     let q = a.pos.join(" ");
     if q.is_empty() {
         return Err(
-            "usage: search <query> [--type people|pages|groups|posts|events] [-n N]".into(),
+            "usage: search <query> [--type top|posts|people|friends|photos|videos|pages|places|groups|events|marketplace] [-n N]"
+                .into(),
         );
     }
-    let ty = a.opt("type").unwrap_or("people");
+    let ty = a.opt("type").unwrap_or("top");
     let b = d.browser(out).await?;
-    let url = format!("https://www.facebook.com/search/{ty}/?q={}", enc(&q));
-    run_js(d, &b, out, &url, "search", a.n.unwrap_or(10)).await
+    let n = a.n.unwrap_or(10);
+    match ty {
+        // the All tab and every vertical share the /search/<type>/ surface
+        "top" | "posts" | "people" | "photos" | "videos" | "pages" | "places" | "groups"
+        | "events" => {
+            let url = format!("https://www.facebook.com/search/{ty}/?q={}", enc(&q));
+            run_js(d, &b, out, &url, "search", n).await
+        }
+        // friends is the people tab narrowed by its own Friends chip
+        "friends" => {
+            let url = format!("https://www.facebook.com/search/people/?q={}", enc(&q));
+            run_js(d, &b, out, &url, "searchFriends", n).await
+        }
+        // marketplace search lives on its own surface with listing cards
+        "marketplace" => {
+            let url = format!(
+                "https://www.facebook.com/marketplace/search/?query={}",
+                enc(&q)
+            );
+            run_js(d, &b, out, &url, "marketSearch", n).await
+        }
+        _ => Err(format!(
+            "unknown search type '{ty}' (top|posts|people|friends|photos|videos|pages|places|groups|events|marketplace)"
+        )),
+    }
 }
 
 pub async fn friends(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
@@ -351,21 +399,7 @@ pub async fn members(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
         .first()
         .ok_or("usage: members <group> [-n N] [--urls]")?;
     let b = d.browser(out).await?;
-    let path = if let Some(p) = d.refs.get(spec) {
-        p
-    } else if spec.starts_with('/') || spec.starts_with("http") {
-        fb_path(spec).ok_or_else(|| format!("not a facebook url: {spec}"))?
-    } else {
-        format!("/groups/{}", spec.trim_start_matches('@'))
-    };
-    let seg = path
-        .strip_prefix("/groups/")
-        .and_then(|rest| rest.split('/').next())
-        .filter(|s| {
-            !s.is_empty() && !matches!(*s, "feed" | "discover" | "joins" | "create" | "search")
-        })
-        .ok_or_else(|| format!("'{spec}' is not a group"))?;
-    let group = format!("/groups/{seg}");
+    let group = group_path(d, spec)?;
     let t = b.acquire().await?;
     let r = async {
         b.goto(&t, &format!("https://www.facebook.com{group}/members"))

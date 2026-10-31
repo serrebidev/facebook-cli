@@ -427,6 +427,42 @@ try{
   await fb('page','a','key','Escape');await fb('page','a','scroll','0','100');await fb('page','a','close');await fb('page','b','close');await assert.rejects(()=>fb('page','a','snapshot'));
   await fb('page','restart','open','https://www.facebook.com/fixture');await fb('stop');await assert.rejects(()=>fb('page','restart','snapshot'));
  });
+ await check('search types, friends chip and marketplace rows',async()=>{
+  assert.match(await fb('search','person','--type','people'),/Friend Person/);
+  assert.match(await fb('search','person','--type','people'),/Stranger Person/);
+  const friendsOnly=await fb('search','person','--type','friends');
+  assert.match(friendsOnly,/Friend Person/);assert.ok(!friendsOnly.includes('Stranger Person'),'friends chip hides non-friends');
+  assert.match(await fb('search','fixture','--type','top'),/Fixture Group/);
+  assert.match(await fb('search','fixture','--type','pages'),/Fixture Page/);
+  assert.match(await fb('search','fixture','--type','groups'),/Fixture Group.*500 members/);
+  assert.match(await fb('search','fixture','--type','events'),/Fixture Event/);
+  assert.match(await fb('search','fixture','--type','places'),/Fixture Cafe/);
+  assert.match(await fb('search','chair','--type','photos'),/Photo of a chair/);
+  assert.match(await fb('search','chair','--type','videos'),/Chair assembly video/);
+  const market=await fb('search','chair','--type','marketplace');
+  assert.match(market,/Wooden chair/);assert.match(market,/\$40.*Vancouver/);
+ });
+ await check('group join, idempotence, questions and leave',async()=>{
+  assert.equal(await fb('group-join','111'),'joined group');
+  assert.equal(await fb('group-join','111'),'already joined');
+  assert.equal(await fb('group-leave','111'),'left group');
+  assert.equal(await fb('group-leave','111'),'not a member of this group');
+  assert.match(await fb('group-join','222'),/join requested/);
+  assert.match(await fb('group-join','222'),/already pending/);
+  const qs=await fb('group-join','333');
+  assert.match(qs,/questions\t2/);assert.match(qs,/q\tWhy do you want to join\?/);
+  assert.match(await fb('group-apply','333','I collect chairs','Yes I agree'),/answers submitted/);
+  assert.match(await fb('group-join','333'),/already pending/);
+ });
+ await check('sell publishes a listing; post takes video and photo files',async()=>{
+  const png=path.join(temp,'chair.png');await writeFile(png,Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==','base64'));
+  const mp4=path.join(temp,'clip.mp4');await writeFile(mp4,Buffer.from('AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDE=','base64'));
+  const listed=await fb('sell','Wooden chair','--price','40','--condition','good','--category','Furniture','--desc','Solid oak','--img',png);
+  assert.match(listed,/listed\tu\w+\t\/marketplace\/item\/777\//);
+  assert.match(await fb('post','clip post','--video',mp4,'--dry'),/dry: composer filled/);
+  assert.match(await fb('post','photo post','--img',png,'--dry'),/dry: composer filled/);
+  assert.equal(await fb('listing-message','/marketplace/item/555/','Hi, is this still available?'),'message sent');
+ });
  await check('timeout drops uncertain page and close frees its name',async()=>{
   const original=env;env={...env,FB_STATE:path.join(temp,'timeout-state'),FB_TIMEOUT:'1'};
   try{await fb('page','slow','open','https://www.facebook.com/fixture');await assert.rejects(()=>fb('page','slow','eval','new Promise(()=>{})'));await assert.rejects(()=>fb('page','slow','snapshot'));assert.equal(await fb('page','slow','close'),'closed');await fb('stop')}finally{env=original}

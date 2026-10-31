@@ -22,7 +22,7 @@
  F.search=async(n)=>{
   const feed=await waitFor(()=>document.querySelector('[role=main] [role=feed] [role=article]')&&document.querySelector('[role=main] [role=feed]'),12000);
   if(!feed){const m=main();return {rows:[],note:m&&/không tìm thấy|no results|aucun résultat/i.test(m.innerText)?'no results':'no results loaded'};}
-  const rows=await gather(n,()=>[...feed.querySelectorAll('[role=article]')].map(a=>{
+  const rows=await gather(n,()=>[...feed.querySelectorAll('[role=article]')].filter(a=>F.visible(a)).map(a=>{
    const links=[...a.querySelectorAll('a[href]')];
    const l=links.find(x=>/\/posts\/|pfbid|\/permalink|\/videos\/|\/reel\/|fbid=/.test(x.getAttribute('href')))||links[0];
    if(!l)return null;
@@ -34,6 +34,37 @@
    const url=stripQ(l.href);
    return {k:url,v:[name,{r:'u',v:url},trunc(info.join(' · '),160)]};
   }).filter(Boolean));
+  return {rows:rows.map(r=>r.v)};
+ };
+ // people search narrowed by the page's own Friends filter chip; when the
+ // chip is not offered, fall back to plain people results and say so
+ F.searchFriends=async(n)=>{
+  const chip=await waitFor(()=>[...document.querySelectorAll('[role=main] [role=button],[role=main] [role=switch],[role=main] [role=checkbox]')].find(b=>/^(Friends|Bạn bè|Amis)$/i.test(clean(b.innerText||b.getAttribute('aria-label')||''))),10000);
+  let note;
+  if(chip){chip.click();await sleep(1800);}else note='friends filter not offered by facebook here; showing all people';
+  const r=await F.search(n);
+  if(note&&!r.err)r.note=r.note?r.note+'; '+note:note;
+  return r;
+ };
+ // marketplace search: listing cards link to /marketplace/item/<id>; the
+ // card text is title, price and location in no guaranteed order, so the
+ // price is the chunk that looks like money
+ F.marketSearch=async(n)=>{
+  const ok=await waitFor(()=>document.querySelector('[role=main] a[href*="/marketplace/item/"]'),12000);
+  if(!ok)return {rows:[],note:'no listings loaded'};
+  await sleep(500);
+  const rows=await gather(n,()=>{
+   const byPath=new Map();
+   for(const a of document.querySelectorAll('[role=main] a[href*="/marketplace/item/"]')){
+    const p=stripQ(a.getAttribute('href'));
+    const chunks=vtext(a).map(clean).filter(Boolean);
+    if(!chunks.length)continue;
+    const price=chunks.find(c=>/^[$€£¥]|^(Free|Miễn phí)$/i.test(c))||'';
+    const rest=chunks.filter(c=>c!==price);
+    if(!byPath.has(p))byPath.set(p,{title:rest[0]||'',price,loc:rest.slice(1).join(' · ')});
+   }
+   return [...byPath.entries()].map(([p,g])=>({k:p,v:[g.title,{r:'u',v:p},trunc([g.price,g.loc].filter(Boolean).join(' · '),120)]}));
+  });
   return {rows:rows.map(r=>r.v)};
  };
  F.friends=async(n)=>{

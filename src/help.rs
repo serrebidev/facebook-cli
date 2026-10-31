@@ -10,7 +10,7 @@ READ
   friends [who] [-n 30]              name, ref, mutual friends
   groups [-n 100] [--urls]           groups you have joined: name, ref, privacy and size
   members <group> [-n 200] [--urls]  people in a group: name, ref, role or join info
-  search <q> [--type people|pages|groups|posts|events] [-n 10]
+  search <q> [--type top|posts|people|friends|photos|videos|pages|places|groups|events|marketplace] [-n 10]   top = All (default); friends = people narrowed by the Friends chip; marketplace rows are title, ref, price and place
   notifs [-n 15]                     time, !=unread, text, ref
 MESSENGER
   chats [-n 20] [--unread] [name]    ref, flags(! unread, g group, e e2ee), time, name, preview
@@ -21,11 +21,16 @@ MESSENGER
   reply <chat> <text> --match text [--file path]...   reply to the message containing text (quotes it), then send like `send`
   unlock [-]                         once: restore end-to-end encrypted chats; PIN read from $FB_PIN or stdin
 ACT
-  post <text> [--img file]... [--to public|friends|me]   confirmed: posted<TAB>ref<TAB>path
+  post <text> [--img file]... [--video file]... [--to public|friends|me]   confirmed: posted<TAB>ref<TAB>path
   comment <post> <text>
   react <post> [like|love|care|haha|wow|sad|angry|none]
   delete <post>                      your own posts only
   friend-add <who>                   send a friend request (reports existing friends / pending requests)
+  group-join <group>                 join a group (reports joined / requested; membership questions come back as questions<TAB>n then q<TAB>text lines)
+  group-apply <group> <answer>...    join a group by answering its membership questions in order (a choice question takes the option text)
+  group-leave <group>                leave a group (reports not-a-member; a pending request is left alone)
+  sell <title> --price N [--condition new|like-new|good|fair] [--category name] [--desc text] [--img file]... [--video file]   create a Marketplace listing; price 0 = free; at least one photo or video, 10 max
+  listing-message <listing> <text>   message a Marketplace seller from the listing page
 BROWSER (fallback; named tabs are separate from normal commands)
   page <name> open <url> | snapshot [filter]   bounded text + refs; max 6 pages
   page <name> click <ref> | fill <ref> <text> | key <Ctrl+a|Enter|...> | scroll <dx> <dy>
