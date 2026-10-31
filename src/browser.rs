@@ -162,6 +162,9 @@ impl Browser {
             };
             // armed while probing: if this future is cancelled, the tab is closed instead of leaked
             t.armed = true;
+            // pooled tabs are frozen (see release_as): wake this one before
+            // probing, or the probe itself would stall on a frozen page
+            self.set_lifecycle(&t, false).await;
             let alive = self
                 .cdp
                 .call(
@@ -287,9 +290,22 @@ impl Browser {
             return;
         }
         t.kind = kind.to_string();
-        let mut idle = self.idle.lock().await;
+        let idle = self.idle.lock().await;
         if idle.len() < MAX_IDLE {
-            idle.push(t);
+            // Freeze the parked page: Facebook tabs run heavy timers, and
+            // the browser is launched with background throttling disabled,
+            // so an unfrozen pooled tab burns CPU the whole time it waits.
+            // acquire_kind unfreezes before use; a frozen tab that Chrome
+            // discards meanwhile is caught by the probe there.
+            drop(idle);
+            self.set_lifecycle(&t, true).await;
+            let mut idle = self.idle.lock().await;
+            if idle.len() < MAX_IDLE {
+                idle.push(t);
+                return;
+            }
+            drop(idle);
+            self.close(t).await;
             return;
         }
         drop(idle);
