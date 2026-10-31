@@ -442,7 +442,7 @@ try{
   assert.match(await fb('search','chair','--type','videos'),/Chair assembly video/);
   const market=await fb('search','chair','--type','marketplace');
   assert.match(market,/Wooden chair/);assert.match(market,/\$40.*Vancouver/);
-  assert.match(market,/https:\/\/www\.facebook\.com\/marketplace\/item\/555\/.*\tlisting/);
+  assert.match(market,/https:\/\/www\.facebook\.com\/marketplace\/item\/555\t.*\tlisting/);
  });
  await check('group join, idempotence, questions and leave',async()=>{
   assert.equal(await fb('group-join','111'),'joined group');
