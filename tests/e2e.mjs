@@ -443,7 +443,13 @@ try{
   }finally{await evaluate(`localStorage.posts=JSON.stringify(${JSON.stringify(saved)});for(const k of ['collapsedBody','expandDelay','expandLabel'])localStorage.removeItem(k);JSON.stringify(true)`)}
  });
  await check('PIN modal send is single and confirmed in three locales',async()=>{for(const locale of ['en','vi','fr']){
-  await evaluate(`localStorage.restored="false";localStorage.locale=JSON.stringify("${locale}");JSON.stringify(true)`);
+  await evaluate(`localStorage.restored="false";localStorage.removeItem("unlocked");localStorage.locale=JSON.stringify("${locale}");JSON.stringify(true)`);
+  // While history is locked a send must report blocked, never clear the
+  // restore prompt by declining it on the user's behalf.
+  await assert.rejects(()=>fb('send','42','fixture send '+locale),/history prompt blocked/);
+  assert.equal(await evaluate(`JSON.stringify(JSON.parse(localStorage.messages||"[]").filter(x=>x==="fixture send ${locale}").length)`),0);
+  await fb('unlock','1234');
+  await evaluate('localStorage.restored="true";JSON.stringify(true)');
   assert.match(await fb('send','42','fixture send '+locale),/^sent/);
   assert.match(await fb('read','42','-n','3'),new RegExp('me: fixture send '+locale));
   assert.equal(await evaluate(`JSON.stringify(JSON.parse(localStorage.messages).filter(x=>x==="fixture send ${locale}").length)`),1);
@@ -456,7 +462,9 @@ try{
   try{await fb('send','42',text)}catch{sent=false}
   const after=await evaluate('JSON.stringify(JSON.parse(localStorage.messages||"[]"))'),added=after.slice(before.length);
   assert.deepEqual(added,sent?[text]:[],'only an exact full message or no message is allowed');
-  await evaluate('localStorage.removeItem("pinAutofocus");localStorage.truncateDraft="true";JSON.stringify(true)');
+  await evaluate('localStorage.removeItem("pinAutofocus");JSON.stringify(true)');
+  await fb('unlock','1234');
+  await evaluate('localStorage.restored="true";localStorage.truncateDraft="true";JSON.stringify(true)');
   const count=after.length;await assert.rejects(()=>fb('send','42','draft must remain complete'),/draft changed.*no text was sent/);
   assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.messages||"[]").length)'),count);
   await evaluate('localStorage.removeItem("truncateDraft");JSON.stringify(true)');
@@ -514,6 +522,7 @@ try{
   }
  });
  await check('explicit unlock opens persisted Enter PIN banner',async()=>{
+  await evaluate('localStorage.pinStyle=JSON.stringify("banner");localStorage.restored="true";localStorage.removeItem("unlocked");JSON.stringify(true)');
   assert.match(await fb('unlock','1234'),/^unlocked/);
   assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.unlocked))'),true);
  });
@@ -550,18 +559,21 @@ try{
   await assert.rejects(()=>fb('unlock','654321'),/PIN was not accepted/);
   await evaluate('localStorage.pinStyle=JSON.stringify("segmented");localStorage.restored="true";JSON.stringify(true)');
  });
- await check('a blocked read never declines the restore',async()=>{
+ await check('a blocked command never declines the restore',async()=>{
   await evaluate('localStorage.restored="false";localStorage.removeItem("pinStyle");localStorage.removeItem("unlocked");JSON.stringify(true)');
-  await assert.rejects(()=>fb('read','42','-n','1'),/did not load|history prompt blocked/);
+  // The composer path meets the prompt head-on: it must report blocked,
+  // never clear the prompt by declining the restore on the user's behalf.
+  await assert.rejects(()=>fb('send','42','must not send while locked'),/history prompt blocked/);
   // Declining would have flipped restored to true and dropped the prompt:
   // the fixture only sets restored on the "Don't restore messages" path.
-  assert.equal(await evaluate('localStorage.getItem("restored")'),'false');
+  assert.equal(await evaluate('localStorage.getItem("restored")==="false"'),true);
+  assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.messages||"[]").filter(x=>x==="must not send while locked").length)'),0);
   assert.match(await fb('unlock','1234'),/^unlocked/);
   assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.unlocked))'),true);
   await evaluate('localStorage.pinStyle=JSON.stringify("segmented");localStorage.restored="true";JSON.stringify(true)');
  });
  await check('a wrong segmented PIN reports what Facebook said',async()=>{
-  await evaluate('localStorage.restored="false";localStorage.removeItem("unlocked");JSON.stringify(true)');
+  await evaluate('localStorage.pinStyle=JSON.stringify("segmented");localStorage.restored="false";localStorage.removeItem("unlocked");JSON.stringify(true)');
   await assert.rejects(()=>fb('unlock','9999'),/PIN was not accepted/);
   await evaluate('localStorage.removeItem("pinStyle");localStorage.restored="true";JSON.stringify(true)');
  });
