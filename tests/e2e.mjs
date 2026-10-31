@@ -434,13 +434,15 @@ try{
   assert.match(friendsOnly,/Friend Person/);assert.ok(!friendsOnly.includes('Stranger Person'),'friends chip hides non-friends');
   assert.match(await fb('search','fixture','--type','top'),/Fixture Group/);
   assert.match(await fb('search','fixture','--type','pages'),/Fixture Page/);
-  assert.match(await fb('search','fixture','--type','groups'),/Fixture Group.*500 members/);
+  assert.match(await fb('search','fixture','--type','groups'),/Fixture Group.*500 members\tgroup/);
+  assert.match(await fb('search','person','--type','people'),/Friend Person.*\tprofile/);
   assert.match(await fb('search','fixture','--type','events'),/Fixture Event/);
   assert.match(await fb('search','fixture','--type','places'),/Fixture Cafe/);
   assert.match(await fb('search','chair','--type','photos'),/Photo of a chair/);
   assert.match(await fb('search','chair','--type','videos'),/Chair assembly video/);
   const market=await fb('search','chair','--type','marketplace');
   assert.match(market,/Wooden chair/);assert.match(market,/\$40.*Vancouver/);
+  assert.match(market,/https:\/\/www\.facebook\.com\/marketplace\/item\/555\/.*\tlisting/);
  });
  await check('group join, idempotence, questions and leave',async()=>{
   assert.equal(await fb('group-join','111'),'joined group');

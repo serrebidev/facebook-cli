@@ -32,7 +32,23 @@
    const btn=new Set([...a.querySelectorAll('[role=button]')].map(b=>clean(b.innerText)));
    const info=all.slice(1).filter(c=>c!==name&&!btn.has(c)&&c!=='·');
    const url=stripQ(l.href);
-   return {k:url,v:[name,{r:'u',v:url},trunc(info.join(' · '),160)]};
+   // what this row IS, from its link and the tab it was found on, so callers
+   // can offer the right actions. Kinds an fb command can act on (post,
+   // profile, page, group) carry a ref; the rest carry the full URL, which
+   // only a browser or reader can open.
+   const tab=location.pathname.split('/')[2]||'top';
+   const kindOf=u=>{
+    if(/\/groups\/[^/]+\/?$/.test(u))return 'group';
+    if(/\/marketplace\/item\//.test(u))return 'listing';
+    if(/\/events\/\d+/.test(u))return 'event';
+    if(/\/photo|fbid=|\/photos\//.test(u))return 'photo';
+    if(/\/watch|\/videos?\/|\/reel\//.test(u))return 'video';
+    if(/\/posts\/|pfbid|\/permalink/.test(u))return 'post';
+    return null;
+   };
+   const kind=kindOf(url)||({people:'profile',pages:'page',groups:'group',events:'event',photos:'photo',videos:'video',posts:'post',places:'place'})[tab]||'profile';
+   const target=['photo','video','event','place','listing'].includes(kind)?'https://www.facebook.com'+url:{r:'u',v:url};
+   return {k:url,v:[name,target,trunc(info.join(' · '),160),kind]};
   }).filter(Boolean));
   return {rows:rows.map(r=>r.v)};
  };
@@ -63,7 +79,7 @@
     const rest=chunks.filter(c=>c!==price);
     if(!byPath.has(p))byPath.set(p,{title:rest[0]||'',price,loc:rest.slice(1).join(' · ')});
    }
-   return [...byPath.entries()].map(([p,g])=>({k:p,v:[g.title,{r:'u',v:p},trunc([g.price,g.loc].filter(Boolean).join(' · '),120)]}));
+   return [...byPath.entries()].map(([p,g])=>({k:p,v:[g.title,'https://www.facebook.com'+p,trunc([g.price,g.loc].filter(Boolean).join(' · '),120),'listing']}));
   });
   return {rows:rows.map(r=>r.v)};
  };
