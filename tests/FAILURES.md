@@ -42,6 +42,13 @@ must expand before comparison; explicit unlock must open a persisted Enter PIN
 banner after normal commands skip restoration; HTTP pages must initialize their
 ref epoch outside a secure context; release publication must exclude e2e-* assets.
 
+Live-account variant (2026-10-30): on a real account the restore flow opens
+staged — an explanation stage and a restore-method choice come before any PIN
+field exists — so unlock must walk those stages (choose the PIN method, press
+what advances) instead of requiring a PIN input up front. A not-found error
+must name the dialogs and buttons actually on screen, never just report the
+dialog missing.
+
 Creation receipts must come from this tab's observed ComposerStoryCreateMutation
 response, not from profile visibility. Old cards may be fully absent, header-only,
 or missing URLs while loading. A failed create must never return any old post ref.
