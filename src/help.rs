@@ -11,6 +11,7 @@ READ
   groups [-n 100] [--urls]           groups you have joined: name, ref, privacy and size
   members <group> [-n 200] [--urls]  people in a group: name, ref, role or join info
   search <q> [--type top|posts|people|friends|photos|videos|pages|places|groups|events|marketplace] [-n 10]   top = All (default); friends = people narrowed by the Friends chip; marketplace rows are title, ref, price and place
+  marketplace [query] [-n 20]        browse Marketplace listings (the recommended feed, or search with a query): title, ref, price and place
   notifs [-n 15]                     time, !=unread, text, ref
 MESSENGER
   chats [-n 20] [--unread] [name]    ref, flags(! unread, g group, e e2ee), time, name, preview

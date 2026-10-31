@@ -323,6 +323,27 @@ pub async fn search(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
     }
 }
 
+/// Browse Marketplace: the recommended listings feed, or search results
+/// when a query is given. Rows are the same listing rows marketplace
+/// search returns (title, URL, "price · place", kind=listing), scraped by
+/// the same card reader — the browse feed and the search results render
+/// the same cards.
+pub async fn marketplace(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
+    let a = parse(args, &[], &[])?;
+    let b = d.browser(out).await?;
+    let n = a.n.unwrap_or(20);
+    let q = a.pos.join(" ");
+    let url = if q.is_empty() {
+        "https://www.facebook.com/marketplace/".to_owned()
+    } else {
+        format!(
+            "https://www.facebook.com/marketplace/search/?query={}",
+            enc(&q)
+        )
+    };
+    run_js(d, &b, out, &url, "marketSearch", n).await
+}
+
 pub async fn friends(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
     let a = parse(args, &[], &[])?;
     let b = d.browser(out).await?;

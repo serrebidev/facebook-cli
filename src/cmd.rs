@@ -74,6 +74,7 @@ async fn run_inner(d: &Daemon, argv: &[String], _cwd: &str, out: &Out) -> Res<()
         "read" => crate::messenger::read(d, &argv[1..], out).await,
         "send" => crate::messenger::send(d, &argv[1..], _cwd, out).await,
         "search" => crate::ops::search(d, &argv[1..], out).await,
+        "marketplace" => crate::ops::marketplace(d, &argv[1..], out).await,
         "friends" => crate::ops::friends(d, &argv[1..], out).await,
         "groups" => crate::ops::groups(d, &argv[1..], out).await,
         "members" => crate::ops::members(d, &argv[1..], out).await,

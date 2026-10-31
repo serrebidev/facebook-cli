@@ -171,10 +171,15 @@ try{
   assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.unlocked))'),true);
   await evaluate('localStorage.pinStyle=JSON.stringify("segmented");localStorage.restored="true";JSON.stringify(true)');
  });
- await check('unlock uses the secure-storage page when the chat list offers no entry',async()=>{
-  await evaluate('localStorage.restored="false";localStorage.pinStyle=JSON.stringify("none");localStorage.removeItem("unlocked");JSON.stringify(true)');
-  assert.match(await fb('unlock','1234'),/^unlocked/);
+ await check('unlock finds the single PIN field in the real restore prompt',async()=>{
+  await evaluate('localStorage.restored="false";localStorage.pinStyle=JSON.stringify("real");localStorage.removeItem("unlocked");JSON.stringify(true)');
+  assert.match(await fb('unlock','123456'),/^unlocked/);
   assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.unlocked))'),true);
+  await evaluate('localStorage.pinStyle=JSON.stringify("segmented");localStorage.restored="true";JSON.stringify(true)');
+ });
+ await check('a wrong PIN in the real restore prompt reports what Facebook said',async()=>{
+  await evaluate('localStorage.restored="false";localStorage.pinStyle=JSON.stringify("real");localStorage.removeItem("unlocked");JSON.stringify(true)');
+  await assert.rejects(()=>fb('unlock','654321'),/PIN was not accepted/);
   await evaluate('localStorage.pinStyle=JSON.stringify("segmented");localStorage.restored="true";JSON.stringify(true)');
  });
  await check('a wrong segmented PIN reports what Facebook said',async()=>{
@@ -460,6 +465,13 @@ try{
   const market=await fb('search','chair','--type','marketplace');
   assert.match(market,/Wooden chair/);assert.match(market,/\$40.*Vancouver/);
   assert.match(market,/https:\/\/www\.facebook\.com\/marketplace\/item\/555\t.*\tlisting/);
+ });
+ await check('marketplace browse lists the feed and searches with a query',async()=>{
+  const browse=await fb('marketplace');
+  assert.match(browse,/Oak table/);assert.match(browse,/\$120.*Vancouver/);
+  assert.match(browse,/https:\/\/www\.facebook\.com\/marketplace\/item\/557\t.*\tlisting/);
+  const searched=await fb('marketplace','chair');
+  assert.match(searched,/Wooden chair/);
  });
  await check('group join, idempotence, questions and leave',async()=>{
   assert.equal(await fb('group-join','111'),'joined group');
