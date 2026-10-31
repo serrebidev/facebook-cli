@@ -281,7 +281,19 @@ impl Browser {
         self.release_as(t, "").await
     }
 
-    pub async fn release_as(&self, mut t: Tab, kind: &str) {
+    /// Pool a tab WITHOUT freezing it: the page still has live work (a
+    /// Messenger restore verifying in the page) that a frozen page cannot
+    /// finish. Costs CPU while parked; use only when freezing would kill
+    /// in-flight work the user is waiting on.
+    pub async fn release_live(&self, t: Tab) {
+        self.release_as_frozen(t, "", false).await
+    }
+
+    pub async fn release_as(&self, t: Tab, kind: &str) {
+        self.release_as_frozen(t, kind, true).await
+    }
+
+    async fn release_as_frozen(&self, mut t: Tab, kind: &str, freeze: bool) {
         t.armed = false;
         t.permit = None;
         // the account changed while this tab was in use: its page belongs to the previous login
@@ -298,7 +310,9 @@ impl Browser {
             // acquire_kind unfreezes before use; a frozen tab that Chrome
             // discards meanwhile is caught by the probe there.
             drop(idle);
-            self.set_lifecycle(&t, true).await;
+            if freeze {
+                self.set_lifecycle(&t, true).await;
+            }
             let mut idle = self.idle.lock().await;
             if idle.len() < MAX_IDLE {
                 idle.push(t);
