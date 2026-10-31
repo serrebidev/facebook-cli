@@ -30,7 +30,7 @@ try{
   if(m.method==='Target.detachedFromTarget'){detached.add(m.params.sessionId);cancelCalls(m.params.sessionId)}
   if(m.method==='Target.attachedToTarget'){const s=m.params.sessionId;report.push({attachedTarget:{type:m.params.targetInfo.type,url:m.params.targetInfo.url,waitingForDebugger:m.params.waitingForDebugger}});await call('Fetch.enable',{patterns:[{urlPattern:'*',requestStage:'Request'}]},s);if(m.params.waitingForDebugger)await call('Runtime.runIfWaitingForDebugger',{},s)}
   if(m.method==='Fetch.requestPaused'){const u=new URL(m.params.request.url);if(u.pathname==='/fixture/redirect-away'){await call('Fetch.fulfillRequest',{requestId:m.params.requestId,responseCode:302,responseHeaders:[{name:'Location',value:'https://example.test/login'}]},m.sessionId);return}if(u.pathname==='/fixture/cancel-start')cancelHoverStarted=true;let body=Buffer.from(['www.facebook.com','example.test'].includes(u.hostname)?fixture:'').toString('base64');if(u.pathname==='/api/graphql/'){const p=JSON.parse(new URLSearchParams(m.params.request.postData).get('variables'));const mode=p?.receiptMode;body=Buffer.from(mode==='malformed'?'not json':JSON.stringify(p?{data:{story_create:{story:{url:mode==='external'?'https://example.test/fixture/posts/'+p.id:'https://www.facebook.com/fixture/posts/'+p.id,default_actor:{id:mode==='wrongActor'?'999':'12345'}}}}}:{errors:[{message:'fixture publish failed'}]})).toString('base64')}await call('Fetch.fulfillRequest',{requestId:m.params.requestId,responseCode:200,responseHeaders:[{name:'Content-Type',value:'text/html; charset=utf-8'}],body},m.sessionId)}
- }catch(e){if(!(e instanceof TargetClosed)&&!e.message.includes('Session with given id not found'))report.push({harnessError:e.message,event:m.method,sessionId:m.sessionId||m.params.sessionId})}};
+ }catch(e){if(!(e instanceof TargetClosed)&&!e.message.includes('Session with given id not found')&&!e.message.includes('Invalid InterceptionId'))report.push({harnessError:e.message,event:m.method,sessionId:m.sessionId||m.params.sessionId})}};
  report.push({runtime:{node:process.version,platform:process.platform,browser:await call('Browser.getVersion')}});
  await call('Target.setAutoAttach',{autoAttach:true,waitForDebuggerOnStart:true,flatten:true});
  await call('Storage.setCookies',{cookies:[{name:'c_user',value:'12345',domain:'.facebook.com',path:'/'}]});
@@ -156,6 +156,17 @@ try{
  });
  await check('unlock walks a staged restore flow to the PIN field',async()=>{
   await evaluate('localStorage.restored="false";localStorage.pinStyle=JSON.stringify("staged");localStorage.removeItem("unlocked");JSON.stringify(true)');
+  assert.match(await fb('unlock','1234'),/^unlocked/);
+  assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.unlocked))'),true);
+  await evaluate('localStorage.pinStyle=JSON.stringify("segmented");localStorage.restored="true";JSON.stringify(true)');
+ });
+ await check('unlock opens restore from a plain link entry',async()=>{
+  await evaluate('localStorage.restored="false";localStorage.pinStyle=JSON.stringify("link");localStorage.removeItem("unlocked");JSON.stringify(true)');
+  assert.match(await fb('unlock','1234'),/^unlocked/);
+  assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.unlocked))'),true);
+ });
+ await check('unlock opens restore from a long banner button',async()=>{
+  await evaluate('localStorage.restored="false";localStorage.pinStyle=JSON.stringify("banner");localStorage.removeItem("unlocked");JSON.stringify(true)');
   assert.match(await fb('unlock','1234'),/^unlocked/);
   assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.unlocked))'),true);
   await evaluate('localStorage.pinStyle=JSON.stringify("segmented");localStorage.restored="true";JSON.stringify(true)');
@@ -464,6 +475,15 @@ try{
   assert.match(await fb('post','clip post','--video',mp4,'--dry'),/dry: composer filled/);
   assert.match(await fb('post','photo post','--img',png,'--dry'),/dry: composer filled/);
   assert.equal(await fb('listing-message','/marketplace/item/555/','Hi, is this still available?'),'message sent');
+ });
+ await check('verified badge reads as Verified, not the tooltip sentence',async()=>{
+  const saved=await evaluate('JSON.stringify(localStorage.posts||null)');
+  await evaluate('localStorage.posts=JSON.stringify([{id:"100",text:"Badge post",aud:"me",badge:true}]);JSON.stringify(true)');
+  try{
+   const feed=await fb('feed');
+   assert.ok(feed.includes('Verified'),'badge shortened to Verified');
+   assert.ok(!feed.includes('Accounts with a verified badge'),'tooltip sentence gone');
+  }finally{await evaluate(saved==='null'?'localStorage.removeItem("posts");JSON.stringify(true)':'localStorage.posts='+saved+';JSON.stringify(true)');}
  });
  await check('timeout drops uncertain page and close frees its name',async()=>{
   const original=env;env={...env,FB_STATE:path.join(temp,'timeout-state'),FB_TIMEOUT:'1'};
