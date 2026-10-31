@@ -906,9 +906,8 @@ pub async fn msgreact(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
         Some((s, rest)) if rest.len() == 1 => (s.as_str(), rest[0].as_str()),
         _ => {
             return Err(
-                "usage: msgreact <chat> <like|love|care|haha|wow|sad|angry> [--match text]"
-                    .into(),
-            )
+                "usage: msgreact <chat> <like|love|care|haha|wow|sad|angry> [--match text]".into(),
+            );
         }
     };
     if !matches!(
@@ -939,11 +938,7 @@ pub async fn msgreact(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
         let info = b
             .eval(
                 &t,
-                &format!(
-                    "window.__fb.msgReact({}, {})",
-                    json!(m),
-                    json!(reaction)
-                ),
+                &format!("window.__fb.msgReact({}, {})", json!(m), json!(reaction)),
             )
             .await?;
         let text = match &info {
