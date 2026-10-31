@@ -1,8 +1,8 @@
 (()=>{
  if(window.__fb)return;
  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
- const clean=s=>(s||'').replace(/[͏​-‏⁠﻿]/g,'').replace(/[ \t ]+/g,' ').replace(/ *\n */g,'\n').trim();
- const vtext=root=>{const w=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);const o=[];let n;while(n=w.nextNode()){const t=n.nodeValue;if(!t||!t.trim()||t.includes('͏'))continue;const p=n.parentElement;if(!p||p.closest('blockquote'))continue;const c=t.replace(/[​-‏⁠﻿]/g,'').replace(/ /g,' ').trim();if(c)o.push(c);}return o;};
+ const clean=s=>(s||'').replace(/[͏​-‏⁠﻿]/g,'').replace(/Accounts with a verified badge have been authenticated and can be Meta Verified subscribers or notable persons or brands\.?/gi,'Verified').replace(/[ \t ]+/g,' ').replace(/ *\n */g,'\n').trim();
+ const vtext=root=>{const w=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);const o=[];let n;while(n=w.nextNode()){const t=n.nodeValue;if(!t||!t.trim()||t.includes('͏'))continue;const p=n.parentElement;if(!p||p.closest('blockquote'))continue;const c=t.replace(/Accounts with a verified badge have been authenticated and can be Meta Verified subscribers or notable persons or brands\.?/gi,'Verified').replace(/[​-‏⁠﻿]/g,'').replace(/ /g,' ').trim();if(c)o.push(c);}return o;};
  const waitFor=async(f,ms=10000,step=60)=>{const t=Date.now();for(;;){let v;try{v=await f()}catch(e){}if(v)return v;if(Date.now()-t>ms)return null;await sleep(step);}};
  const visible=e=>e.isConnected&&e.getClientRects().length&&getComputedStyle(e).visibility==='visible';
  const enabled=e=>!e.matches(':disabled')&&e.closest('[aria-disabled="true" i],[aria-disabled="false" i]')?.getAttribute('aria-disabled').toLowerCase()!=='true';

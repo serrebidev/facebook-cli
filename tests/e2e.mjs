@@ -160,6 +160,17 @@ try{
   assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.unlocked))'),true);
   await evaluate('localStorage.pinStyle=JSON.stringify("segmented");localStorage.restored="true";JSON.stringify(true)');
  });
+ await check('unlock opens restore from a plain link entry',async()=>{
+  await evaluate('localStorage.restored="false";localStorage.pinStyle=JSON.stringify("link");localStorage.removeItem("unlocked");JSON.stringify(true)');
+  assert.match(await fb('unlock','1234'),/^unlocked/);
+  assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.unlocked))'),true);
+ });
+ await check('unlock opens restore from a long banner button',async()=>{
+  await evaluate('localStorage.restored="false";localStorage.pinStyle=JSON.stringify("banner");localStorage.removeItem("unlocked");JSON.stringify(true)');
+  assert.match(await fb('unlock','1234'),/^unlocked/);
+  assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.unlocked))'),true);
+  await evaluate('localStorage.pinStyle=JSON.stringify("segmented");localStorage.restored="true";JSON.stringify(true)');
+ });
  await check('a wrong segmented PIN reports what Facebook said',async()=>{
   await evaluate('localStorage.restored="false";localStorage.removeItem("unlocked");JSON.stringify(true)');
   await assert.rejects(()=>fb('unlock','9999'),/PIN was not accepted/);
@@ -464,6 +475,15 @@ try{
   assert.match(await fb('post','clip post','--video',mp4,'--dry'),/dry: composer filled/);
   assert.match(await fb('post','photo post','--img',png,'--dry'),/dry: composer filled/);
   assert.equal(await fb('listing-message','/marketplace/item/555/','Hi, is this still available?'),'message sent');
+ });
+ await check('verified badge reads as Verified, not the tooltip sentence',async()=>{
+  const saved=await evaluate('JSON.stringify(localStorage.posts||null)');
+  await evaluate('localStorage.posts=JSON.stringify([{id:"100",text:"Badge post",aud:"me",badge:true}]);JSON.stringify(true)');
+  try{
+   const feed=await fb('feed');
+   assert.ok(feed.includes('Verified'),'badge shortened to Verified');
+   assert.ok(!feed.includes('Accounts with a verified badge'),'tooltip sentence gone');
+  }finally{await evaluate(saved==='null'?'localStorage.removeItem("posts");JSON.stringify(true)':'localStorage.posts='+saved+';JSON.stringify(true)');}
  });
  await check('timeout drops uncertain page and close frees its name',async()=>{
   const original=env;env={...env,FB_STATE:path.join(temp,'timeout-state'),FB_TIMEOUT:'1'};
