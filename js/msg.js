@@ -247,8 +247,31 @@
   for(let p=cand;p&&p!==document.body;p=p.parentElement)if(HINT.test(p.innerText||''))return p;
   return null;
  };
- const pinRoot=()=>{const d=pinDialog();if(d)return d;const r=pagePinRoot();if(r)return r;const rd=restoreDialog();return rd&&pinInputs(rd).length?rd:null;};
+ // The surface Brandon's account actually shows (verified live on his
+ // account, 2026-10-31): a prompt with NO role=dialog wrapper and NO
+ // submit button — the heading "Enter your PIN to restore your chats",
+ // ONE text field whose label is a separate element (aria-labelledby or
+ // a <label>, never aria-label/placeholder), and entry auto-submits when
+ // the PIN is complete. Role- and attribute-based finders walk straight
+ // past it; find it by its heading and take the field in the same
+ // container. (The often-cited facebook.com/secure-storage URL is NOT a
+ // door: on his account it redirects to an unrelated business Page.)
+ const headingRoot=()=>{
+  const h=[...document.querySelectorAll('h1,h2,h3,[role=heading]')].find(e=>F.visible(e)&&/enter your pin to restore/i.test(F.clean(e.innerText||'')));
+  if(!h)return null;
+  for(let p=h.parentElement;p&&p!==document.body;p=p.parentElement){
+   // Any field under the heading counts, visible or not: a submitted PIN may be hidden while the prompt stays up.
+   // A real <input> only: the message composer is a role=textbox and shares ancestors with the heading.
+   if(pinInputs(p).some(i=>i.tagName==='INPUT'))return p;
+  }
+  return null;
+ };
+ const pinRoot=()=>{const d=pinDialog();if(d)return d;const hr=headingRoot();if(hr)return hr;const r=pagePinRoot();if(r)return r;const rd=restoreDialog();return rd&&pinInputs(rd).length?rd:null;};
  const label=e=>F.clean(e.innerText||e.getAttribute('aria-label')||'');
+ // Buttons and links whose whole label matches. Never a wrapper element: a
+ // role-less or role=presentation ancestor shares its child's label but
+ // swallows the press.
+ const pressable=(root,re)=>[...root.querySelectorAll('button,[role=button],a[href],[role=link]')].find(e=>F.visible(e)&&F.enabled(e)&&re.test(label(e)));
  const ADVANCE=/^(continue|next|restore|restore messages|restore chat history|restore history|get started|start|submit|done|tiếp tục|tiếp theo|khôi phục|continuer|suivant|restaurer|commencer)$/i;
  const OPEN=/enter (your |a )?pin|use (your )?pin|restore( messages| chat history| history)?|restore now|sync now|nhập mã pin|saisir (?:le |votre )?code pin|saisissez (?:le |votre )?code pin/i;
  // What Facebook actually put on screen, so a not-found error names the real
@@ -259,35 +282,49 @@
  // person's name and message preview back in an error is both noise and
  // their private content. Rows are excluded by their list container.
  const RESTORE_ONLY=/restore|secure storage|chat history|\bPIN\b|khôi phục|restaur|sécuris/i;
- const inChatList=e=>!!e.closest('[role=list],[role=grid],[role=row],[role=log],[role=complementary]');
+ const CHAT_LIST='[role=list],[role=grid],[role=row],[role=log],[role=complementary]';
+ // Excludes both a chat list's descendants and the wrappers that merely contain one: a wrapper's text is the rows' text.
+ const inChatList=e=>!!e.closest(CHAT_LIST);
+ // A chat row's name or preview can say anything, "restore" included: never press one.
+ const inChatRow=e=>!!e.closest('[role=grid],[role=row],[role=log]');
  const seenRestore=()=>{
   const parts=[];
   for(const d of document.querySelectorAll('[role=dialog]')){const t=F.clean(d.innerText).slice(0,160);if(t&&RESTORE_ONLY.test(t))parts.push('dialog: '+t);}
-  const btns=[...document.querySelectorAll('button,[role=button]')].filter(b=>F.visible(b)&&!inChatList(b)).map(label).filter(t=>t&&RESTORE_ONLY.test(t)).slice(0,10);
+  const btns=[...document.querySelectorAll('button,[role=button],a[href],[role=link]')].filter(b=>F.visible(b)&&!inChatList(b)).map(label).filter(t=>t&&t.length<=160&&RESTORE_ONLY.test(t)).slice(0,10);
   if(btns.length)parts.push('restore controls: '+btns.join(' | '));
   const hints=new Set();
-  for(const e of document.querySelectorAll('div,span,a,p')){if(hints.size>=3)break;if(!F.visible(e)||e.children.length>3||inChatList(e))continue;const t=F.clean(e.innerText||'');if(t&&t.length<=160&&RESTORE_ONLY.test(t))hints.add(e.tagName.toLowerCase()+': '+t.slice(0,120));}
+  for(const e of document.querySelectorAll('div,span,a,p')){if(hints.size>=3)break;if(!F.visible(e)||e.children.length>3||inChatList(e)||e.querySelector(CHAT_LIST))continue;const t=F.clean(e.innerText||'');if(t&&t.length<=160&&RESTORE_ONLY.test(t))hints.add(e.tagName.toLowerCase()+': '+t.slice(0,120));}
   if(hints.size)parts.push('restore text: '+[...hints].join(' | '));
   return parts.length?(' On screen: '+parts.join(' ;; ').slice(0,500)):'';
  };
- F.pinFocus=async()=>{
+ F.pinFocus=async(budget)=>{
   const pressed=new WeakSet();
-  const end=Date.now()+45000;
+  let lastHint=0;
+  const end=Date.now()+(budget||45000);
   while(Date.now()<end){
    const root=pinRoot();
-   if(root){const inp=pinInputs(root).filter(i=>F.visible(i))[0]||pinInputs(root)[0];if(inp){inp.focus();return true;}}
+   if(root){const inp=pinInputs(root).filter(i=>F.visible(i))[0]||pinInputs(root)[0];if(inp){try{inp.click();}catch(e){}inp.focus();return true;}}
    // A restore stage with no PIN field yet: choose the PIN method when one
    // is offered (never the forgot/reset path), then press what advances it.
    const d=restoreDialog();
    if(d){
     const opt=[...d.querySelectorAll('[role=radio],[role=option],[role=listitem],label,button,[role=button]')].find(e=>F.visible(e)&&F.enabled(e)&&/pin/i.test(label(e))&&!/forgot|reset/i.test(label(e)));
     if(opt&&!pressed.has(opt)){pressed.add(opt);try{F.press(opt);}catch(e){}await F.sleep(300);continue;}
-    const btn=[...d.querySelectorAll('button,[role=button]')].find(b=>F.visible(b)&&F.enabled(b)&&ADVANCE.test(label(b)));
+    const btn=pressable(d,ADVANCE);
     if(btn&&!pressed.has(btn)){pressed.add(btn);try{F.press(btn);}catch(e){}await F.sleep(300);continue;}
    }
-   // No dialog: the restore offer may be a banner button in the chat pane.
-   const open=[...document.querySelectorAll('button,[role=button]')].find(b=>F.visible(b)&&F.enabled(b)&&label(b).length<60&&OPEN.test(label(b)));
-   if(open&&!pressed.has(open)){pressed.add(open);try{F.press(open);}catch(e){}await F.sleep(300);continue;}
+   // No dialog: the restore offer may be a banner or link in the chat pane.
+   // It is not always a <button>: Facebook also renders it as a link, and a
+   // banner button's label is the whole sentence, well past 60 chars.
+   const open=[...document.querySelectorAll('button,[role=button],a[href],[role=link],[role=menuitem],[role=tab]')].find(b=>F.visible(b)&&F.enabled(b)&&!pressed.has(b)&&!inChatRow(b)&&label(b).length<=140&&OPEN.test(label(b)));
+   if(open){pressed.add(open);try{F.press(open);}catch(e){}await F.sleep(300);continue;}
+   // Last resort, throttled: a bare text element that reads like a restore
+   // entry and is clickable (pointer cursor or inside a clickable ancestor).
+   if(Date.now()-lastHint>1500){
+    lastHint=Date.now();
+    const hint=[...document.querySelectorAll('a,div,span,[role=link]')].filter(e=>F.visible(e)&&e.children.length<4&&!inChatRow(e)).find(e=>{const t=label(e);return t.length>0&&t.length<=140&&/restore (your )?(chat history|messages)|restore from secure storage|enter (your )?pin/i.test(t)&&(e.closest('a,button,[role=button],[role=link]')||getComputedStyle(e).cursor==='pointer')&&!pressed.has(e.closest('a,button,[role=button],[role=link]')||e);});
+    if(hint){const c=hint.closest('a,button,[role=button],[role=link]')||hint;pressed.add(c);try{F.press(c);}catch(e){}await F.sleep(300);continue;}
+   }
    await F.sleep(200);
   }
   // No prompt was found in either walk. Say what that means, because on a
@@ -296,32 +333,41 @@
   // never succeed.
   return 'PIN restore prompt not found. If "Don\'t restore messages" was chosen on this browser profile before, Facebook remembers it and will not offer the prompt again here: chats this profile already restored still read, but history missing from it cannot be restored from this profile. Otherwise the restore UI changed — inspect it with `fb page`.'+seenRestore();
  };
- F.pinDone=async()=>{
+ F.pinDone=async(budget)=>{
   // Typing alone does not submit every surface: some wait for a Continue /
   // Restore button once the PIN is complete, and a wrong PIN is reported in
-  // the dialog instead of closing it. Watch for all three outcomes.
+  // the dialog instead of closing it. And on the real surface the PIN
+  // auto-submits into a "Verifying your PIN" state that can run for
+  // minutes: a sealed field with the surface still up is Facebook still
+  // restoring, NOT success and NOT failure. The restore runs in this page,
+  // so the caller keeps the tab alive and unfrozen until the surface has
+  // actually cleared (sustained, not a remount blip) or the budget ends;
+  // a budget that ends on a sealed surface reports 'VERIFYING' so the
+  // caller leaves the tab running instead of freezing the restore dead.
   const SUBMIT=/^(Continue|Restore|Restore messages|Next|Submit|Done|Tiếp tục|Khôi phục|Tiếp theo|Continuer|Restaurer|Suivant)$/i;
   const BAD=/incorrect|wrong PIN|invalid PIN|PIN (was )?not accepted|không đúng|sai mã|erroné/i;
   const clicked=new WeakSet();
-  const end=Date.now()+20000;
-  let sealed=0;
+  const end=Date.now()+(budget||240000);
+  let gone=0;
   while(Date.now()<end){
-   const d=pinDialog()||pagePinRoot();
-   if(!d)return true;
+   const d=pinRoot();
+   if(!d){
+    if(!gone)gone=Date.now();else if(Date.now()-gone>1000)return true;
+    await F.sleep(250);continue;
+   }
+   gone=0;
    const err=[...d.querySelectorAll('[role=alert],div,span')].map(e=>F.clean(e.innerText)).find(t=>t&&t.length<200&&BAD.test(t));
    if(err)return 'Facebook says the PIN was not accepted: '+err;
-   // The field sealing shut (disabled/hidden) with no rejection showing is
-   // Facebook taking the PIN away to restore: that is a submission, not a
-   // dialog that is still waiting for one.
    const inputs=pinInputs(d);
-   if(inputs.length&&!inputs.some(i=>F.visible(i)&&F.enabled(i))){
-    if(!sealed)sealed=Date.now();else if(Date.now()-sealed>3000)return true;
-   }else sealed=0;
    const filled=inputs.reduce((n,i)=>{const v=(i.value==null?i.innerText:i.value)||'';return n+v.replace(/\D/g,'').length},0);
-   const btn=[...d.querySelectorAll('button,[role=button]')].find(b=>F.visible(b)&&F.enabled(b)&&SUBMIT.test(F.clean(b.innerText||b.getAttribute('aria-label'))));
+   const btn=pressable(d,SUBMIT);
    if(btn&&filled>=4&&!clicked.has(btn)){clicked.add(btn);F.press(btn);}
-   await F.sleep(150);
+   await F.sleep(250);
   }
+  const d=pinRoot();
+  if(!d)return true;
+  const inputs=pinInputs(d);
+  if(inputs.length&&!inputs.some(i=>F.visible(i)&&F.enabled(i)))return 'VERIFYING';
   return 'PIN rejected or dialog still open';
  };
 })();

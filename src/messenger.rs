@@ -939,10 +939,19 @@ pub async fn unlock(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
     let t = b.acquire().await?;
     let r = async {
         b.goto(&t, "https://www.facebook.com/messages/t/").await?;
-        match b.eval(&t, "window.__fb.pinFocus()").await? {
-            Value::Bool(true) => {}
-            Value::String(s) => return Err(s),
-            _ => return Err("unexpected".into()),
+        if b.eval(&t, "window.__fb.pinFocus(20000)").await? != Value::Bool(true) {
+            // The restore prompt is summoned by the messages page itself
+            // (verified on the user's account, 2026-10-31: it reappears on
+            // a fresh load even after being closed). One reload re-summons
+            // it when the first load raced or the prompt was mid-dismissal.
+            // facebook.com/secure-storage is NOT a fallback: on a real
+            // account it redirects to an unrelated business Page.
+            b.goto(&t, "https://www.facebook.com/messages/t/").await?;
+            match b.eval(&t, "window.__fb.pinFocus(20000)").await? {
+                Value::Bool(true) => {}
+                Value::String(s) => return Err(s),
+                _ => return Err("unexpected".into()),
+            }
         }
         // Type the PIN as real keystrokes, one digit at a time. A single
         // Input.insertText lands in only the first box of the surfaces that
@@ -953,13 +962,24 @@ pub async fn unlock(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
             b.key(&t, &c.to_string(), &format!("Digit{c}"), 48 + d, 0)
                 .await?;
         }
-        match b.eval(&t, "window.__fb.pinDone()").await? {
-            Value::Bool(true) => {}
-            Value::String(s) => return Err(s),
-            _ => return Err("unexpected".into()),
+        // Wait for the restore to actually finish (budget 4 minutes, covered
+        // by the unlock command's own allowance in cmd.rs): the PIN
+        // auto-submits into a "Verifying your PIN" state, and reporting
+        // success early would hide a restore that is still running.
+        // 'VERIFYING' at budget end is not an error: the PIN was accepted,
+        // Facebook is still working.
+        match b.eval(&t, "window.__fb.pinDone(240000)").await? {
+            Value::Bool(true) => {
+                out.line("unlocked");
+                Ok(())
+            }
+            Value::String(s) if s == "VERIFYING" => {
+                out.line("PIN accepted; Facebook is still restoring your chat history — it finishes in the background as long as the browser stays open");
+                Ok(())
+            }
+            Value::String(s) => Err(s),
+            _ => Err("unexpected".into()),
         }
-        out.line("unlocked (history restores in the background)");
-        Ok(())
     }
     .await;
     b.release(t).await;

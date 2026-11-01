@@ -20,26 +20,40 @@
   return o;
  };
  const waitFor=async(f,ms=10000,step=60)=>{const t=Date.now();for(;;){let v;try{v=await f()}catch(e){}if(v)return v;if(Date.now()-t>ms)return null;await sleep(step);}};
+ // The verified-badge tooltip is accessibility metadata that lands inside author headers; shorten it there only,
+ // never in message text or drafts, which must compare and read back exactly.
+ const shortBadge=s=>s.replace(/Accounts with a verified badge have been authenticated and can be Meta Verified subscribers or notable persons or brands\.?/gi,'Verified');
  const visible=e=>e.isConnected&&e.getClientRects().length&&getComputedStyle(e).visibility==='visible';
  const enabled=e=>!e.matches(':disabled')&&e.closest('[aria-disabled="true" i],[aria-disabled="false" i]')?.getAttribute('aria-disabled').toLowerCase()!=='true';
  // Use application buttons: removing a modal leaves React's focus trap and state alive.
  const dismissRestore=async()=>{
-  const deadline=Date.now()+5000,clicked=new WeakSet();let acted=false,quiet=0;
+  const deadline=Date.now()+5000,clicked=new WeakSet();let acted=false,quiet=0,cancelled=false;
+  const blockedErr=()=>Error('Messenger history prompt blocked input; use `fb unlock` or inspect with `fb page`');
   while(true){
    const ds=[...document.querySelectorAll('[role=dialog]')];
    const d=ds.find(d=>/PIN/i.test(d.innerText)&&/restore|khôi phục|restaur/i.test(d.innerText)&&d.querySelector('input,[role=textbox]'));
    const confirm=ds.find(d=>/Continue without restoring|Tiếp tục mà không khôi phục|Continuer sans restaurer/i.test(d.innerText));
-   if(!d&&!confirm){
+   if(confirm){
+    // NEVER "Don't restore messages": that declines the restore for this
+    // device, and the PIN prompt `fb unlock` waits for never comes back.
+    // Cancel returns to the prompt untouched; the read reports blocked.
+    if(cancelled)throw blockedErr();
+    const b=[...confirm.querySelectorAll('button,[role=button]')].find(b=>visible(b)&&/^(Cancel|Hủy|Annuler)$/i.test(clean(b.getAttribute('aria-label')||b.innerText)));
+    if(!b)throw blockedErr();
+    if(!clicked.has(b)){b.click();clicked.add(b);cancelled=true;acted=true;}
+    await sleep(60);continue;
+   }
+   if(!d){
     if(!acted)return true;
     if(!quiet)quiet=Date.now();
     if(Date.now()-quiet>=250)return true;
     await sleep(50);continue;
    }
    quiet=0;
-   const root=confirm||d;
-   const re=confirm?/^(Don't restore messages|Do not restore(?: messages)?|Không khôi phục tin nhắn|Ne pas restaurer(?: les messages)?|Continuer sans restaurer)$/i:/^(Close|Đóng|Fermer)$/i;
-   const b=[...root.querySelectorAll('button,[role=button]')].find(b=>visible(b)&&re.test(clean(b.getAttribute('aria-label')||b.innerText)));
-   if(Date.now()>deadline)throw Error('Messenger history prompt blocked input; use `fb unlock` or inspect with `fb page`');
+   // The prompt is back (or never left) after a Close + Cancel cycle: it can
+   // only be cleared by unlocking or by declining, and a read does neither.
+   if(cancelled||Date.now()>deadline)throw blockedErr();
+   const b=[...d.querySelectorAll('button,[role=button]')].find(b=>visible(b)&&/^(Close|Đóng|Fermer)$/i.test(clean(b.getAttribute('aria-label')||b.innerText)));
    if(b&&!clicked.has(b)){b.click();clicked.add(b);acted=true;}
    await sleep(60);
   }
@@ -147,5 +161,5 @@
   const before=l.slice(sep+2,colon<0?l.length:colon).trim();
   return {t:tm[0],sender:before,text:colon>=0?clean(l.slice(colon+2)):''};
  };
- window.__fb={parseLabel,mergeChunks,press,sleep,clean,vtext,waitFor,visible,enabled,dismissRestore,postCards,postText,canon,groupPath,profilePath,addGroup,TIME,SPON,ACT,trunc,scrollerOf,num};
+ window.__fb={shortBadge,parseLabel,mergeChunks,press,sleep,clean,vtext,waitFor,visible,enabled,dismissRestore,postCards,postText,canon,groupPath,profilePath,addGroup,TIME,SPON,ACT,trunc,scrollerOf,num};
 })();
