@@ -183,7 +183,7 @@ mod tests {
         let refs = Refs::load(file.clone());
         let target = "/profile.php?id=123&sk=about";
         let token = refs.put('u', target);
-        assert_eq!(refs.resolve(&[token.clone()]).unwrap(), target);
+        assert_eq!(refs.resolve(std::slice::from_ref(&token)).unwrap(), target);
         assert!(refs.resolve(&[]).is_err());
         assert!(refs.resolve(&[token, "extra".into()]).is_err());
         assert!(refs.resolve(&["unknown".into()]).is_err());
