@@ -28,9 +28,6 @@ ACT
   group-join <group>                 join a group (reports joined / requested; membership questions come back as questions<TAB>n then q<TAB>text lines)
   group-apply <group> <answer>...    join a group by answering its membership questions in order (a choice question takes the option text)
   group-leave <group>                leave a group (reports not-a-member; a pending request is left alone)
-  sell <title> --price N [--condition new|like-new|good|fair] [--category name] [--desc text] [--img file]... [--video file]   create a Marketplace listing; price 0 = free; at least one photo or video, 10 max
-  listing-message <listing> <text>   message a Marketplace seller from the listing page
->>>>>>> bb059e6 (Search all types, group join/apply/leave, Marketplace sell + listing-message, post --video (#4))
 BROWSER (fallback; named tabs are separate from normal commands)
   page <name> open <url> | snapshot [filter]   bounded text + refs; max 6 pages
   page <name> stories [story-url]     experimental story page; blocks known seen requests, not a privacy guarantee

@@ -55,6 +55,7 @@
   const current=await waitFor(()=>{const b=audienceButton();return b&&AUD[kind].test(first(b.innerText))},3000);
   return current?true:'audience change not confirmed; nothing was posted';
  };
+ const setVal=(el,v)=>{const proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;const set=Object.getOwnPropertyDescriptor(proto,'value').set;set.call(el,v);el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));};
  // ---- group join / leave: the header button cycles Join group -> Requested
  // (private, approval needed) or Joined; leaving goes through the Joined menu
  const G_JOIN=/^(Join group|Join|Tham gia nhóm|Rejoindre le groupe|Rejoindre)$/i;
@@ -127,78 +128,6 @@
   submit.click();
   const done=await waitFor(()=>{const s=F.groupState();if(s==='joined')return 'joined';if(s==='pending')return 'pending';if(!dlg())return 'submitted';return null;},10000,250);
   return done||'unconfirmed';
- };
- // ---- marketplace listing message: the listing's Message button opens a
- // chat popover; the text is typed by the caller, Enter sends it
- F.listingMessageOpen=async()=>{
-  const btn=await waitFor(()=>[...document.querySelectorAll('[role=main] [role=button]')].find(b=>/^Message/i.test(clean(b.innerText||b.getAttribute('aria-label')||''))),12000);
-  if(!btn)return 'no message button on this listing';
-  btn.click();
-  const box=await waitFor(()=>{for(const d of dialogs()){const tb=d.querySelector('[role=textbox][contenteditable=true]');if(tb)return tb;}return null;},10000);
-  if(!box)return 'message composer did not open';
-  box.focus();
-  return true;
- };
- F.listingMessageSent=text=>{
-  const want=clean(text).toLowerCase();
-  return [...document.querySelectorAll('[role=dialog] [role=log] *,[role=dialog] [role=article]')].some(e=>clean(e.innerText||'').toLowerCase()===want);
- };
- // ---- marketplace listing form (/marketplace/create/item): labelled text
- // fields, Condition and Category pickers, one file input for photos/video
- const setVal=(el,v)=>{const proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;const set=Object.getOwnPropertyDescriptor(proto,'value').set;set.call(el,v);el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));};
- const sellField=lab=>[...document.querySelectorAll('input,textarea')].find(e=>new RegExp('^'+lab+'$','i').test(e.getAttribute('aria-label')||'')||new RegExp('^'+lab,'i').test(e.getAttribute('placeholder')||''));
- F.sellSet=(field,value)=>{const el=sellField(field);if(!el)return 'no '+field+' field';setVal(el,value);return true;};
- const SELL_COND={new:/^(New|Mới|Neuf)$/i,'like-new':/^(Used\s*[-–]\s*like new|Đã qua sử dụng\s*[-–]\s*như mới|Occasion\s*[-–]\s*comme neuf)$/i,good:/^(Used\s*[-–]\s*good|Đã qua sử dụng\s*[-–]\s*tốt|Occasion\s*[-–]\s*bon état)$/i,fair:/^(Used\s*[-–]\s*fair|Đã qua sử dụng\s*[-–]\s*khá|Occasion\s*[-–]\s*état correct)$/i};
- F.sellPick=async(kind,name)=>{
-  const btn=[...document.querySelectorAll('[role=button]')].find(b=>new RegExp('^'+kind,'i').test(b.getAttribute('aria-label')||clean(b.innerText||'')));
-  if(!btn)return 'no '+kind+' picker';
-  btn.click();
-  const opts=()=>[...document.querySelectorAll('[role=option],[role=listbox] [role=button],[role=menuitem]')];
-  let list=await waitFor(()=>opts().length?opts():null,6000);
-  if(!list)return kind+' options never opened';
-  if(kind==='category'){
-   const search=document.querySelector('input[type=search],[role=listbox] input,[role=dialog] input');
-   if(search&&name){setVal(search,name);await sleep(700);list=opts();}
-   const want=name.toLowerCase();
-   const hit=list.find(o=>clean(o.innerText||'').toLowerCase()===want)||list.find(o=>clean(o.innerText||'').toLowerCase().includes(want));
-   if(!hit)return 'category not found; options: '+list.map(o=>clean(o.innerText||'')).filter(Boolean).slice(0,12).join(' | ');
-   hit.click();await sleep(300);return true;
-  }
-  const re=SELL_COND[name];if(!re)return 'bad condition '+name;
-  const hit=list.find(o=>re.test(clean(o.innerText||'')));
-  if(!hit)return 'condition not found; options: '+list.map(o=>clean(o.innerText||'')).filter(Boolean).slice(0,8).join(' | ');
-  hit.click();await sleep(300);return true;
- };
- // the bytes arrive beforehand as base64 chunks (upBegin/upChunk in msg.js), like the composer
- F.sellAttach=async(name,mime)=>{
-  const parts=window.__fbUp;window.__fbUp=null;
-  const inp=document.querySelector('[role=main] input[type=file],input[type=file]');
-  if(!inp)return 'no file input';
-  if(!parts)return 'no data';
-  const bytes=parts.map(p=>{const bin=atob(p);const u8=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u8[i]=bin.charCodeAt(i);return u8;});
-  const dt=new DataTransfer();dt.items.add(new File(bytes,name,{type:mime}));
-  const before=document.querySelectorAll('img[src^="blob:"]').length;
-  inp.files=dt.files;inp.dispatchEvent(new Event('change',{bubbles:true}));
-  const ok=await waitFor(()=>document.querySelectorAll('img[src^="blob:"]').length>before,20000,200);
-  return ok?true:'no preview after attach';
- };
- const sellBtn=re=>[...document.querySelectorAll('[role=button]')].find(b=>re.test(clean(b.innerText||b.getAttribute('aria-label')||''))&&F.enabled(b));
- F.sellNext=async()=>{
-  const nx=sellBtn(/^(Next|Tiếp|Suivant)$/i);if(!nx)return 'no Next button (a required field is missing?)';
-  nx.click();
-  const pub=await waitFor(()=>sellBtn(/^(Publish|Đăng|Publier)$/i),10000,200);
-  return pub?true:'Publish step never appeared';
- };
- F.sellPublish=async()=>{
-  const pub=sellBtn(/^(Publish|Đăng|Publier)$/i);if(!pub)return 'no Publish button';
-  pub.click();
-  const done=await waitFor(()=>{
-   if(/\/marketplace\/item\//.test(location.pathname))return location.pathname;
-   const t=clean(document.body.innerText||'');
-   if(/listing is (now )?live|your listing has been published|đã đăng tin/i.test(t))return 'live';
-   return null;
-  },30000,300);
-  return done||'publish not confirmed';
  };
  const postButton=()=>{const d=F.composeDialog();const bs=d?[...d.querySelectorAll('[role=button]')].filter(b=>F.visible(b)&&/^(Post|Đăng|Publier)$/i.test(clean(b.getAttribute('aria-label')||btnText(b)))):[];return bs.length===1?bs[0]:null;};
  // Retained audience panes can put Done after Post; order is not action identity.

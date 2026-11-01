@@ -88,8 +88,6 @@ async fn run_inner(d: &Daemon, argv: &[String], _cwd: &str, out: &Out) -> Res<()
         "group-join" => crate::act::group_join(d, &argv[1..], out).await,
         "group-apply" => crate::act::group_apply(d, &argv[1..], out).await,
         "group-leave" => crate::act::group_leave(d, &argv[1..], out).await,
-        "sell" => crate::act::sell(d, &argv[1..], _cwd, out).await,
-        "listing-message" => crate::act::listing_message(d, &argv[1..], out).await,
         "unsend" => crate::messenger::unsend(d, &argv[1..], out).await,
         "unlock" => crate::messenger::unlock(d, &argv[1..], out).await,
         "feed" => crate::feed::feed(d, &argv[1..], out).await,

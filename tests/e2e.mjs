@@ -826,14 +826,11 @@ try{
   assert.match(await fb('group-apply','333','I collect chairs','Yes I agree'),/answers submitted/);
   assert.match(await fb('group-join','333'),/already pending/);
  });
- await check('sell publishes a listing; post takes video and photo files',async()=>{
+ await check('post takes video and photo files',async()=>{
   const png=path.join(temp,'chair.png');await writeFile(png,Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==','base64'));
   const mp4=path.join(temp,'clip.mp4');await writeFile(mp4,Buffer.from('AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDE=','base64'));
-  const listed=await fb('sell','Wooden chair','--price','40','--condition','good','--category','Furniture','--desc','Solid oak','--img',png);
-  assert.match(listed,/listed\tu\w+\t\/marketplace\/item\/777\//);
   assert.match(await fb('post','clip post','--video',mp4,'--dry'),/dry: composer filled/);
   assert.match(await fb('post','photo post','--img',png,'--dry'),/dry: composer filled/);
-  assert.equal(await fb('listing-message','/marketplace/item/555/','Hi, is this still available?'),'message sent');
  });
  await check('timeout drops uncertain page and close frees its name',async()=>{
   const original=env;env={...env,FB_STATE:path.join(temp,'timeout-state'),FB_TIMEOUT:'1'};

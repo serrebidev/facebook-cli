@@ -225,31 +225,6 @@ if(location.pathname==='/search/people/'){
   }
  };
  paint();head.append(jb);main.append(head);
-}else if(location.pathname==='/marketplace/create/item'){
- const wrap=document.createElement('div');
- const title=document.createElement('input');title.setAttribute('aria-label','Title');
- const price=document.createElement('input');price.setAttribute('aria-label','Price');
- const desc=document.createElement('textarea');desc.setAttribute('aria-label','Description');
- const file=document.createElement('input');file.type='file';file.multiple=true;
- let previews=0,cond='',cat='';
- const next=button('Next',()=>{wrap.remove();const pub=button('Publish',()=>{history.pushState(null,'','/marketplace/item/777/');const n=document.createElement('div');n.textContent='Your listing is now live';main.append(n)});main.append(pub)});
- const upd=()=>{if(title.value&&price.value&&previews>0&&cond)next.removeAttribute('aria-disabled');else next.setAttribute('aria-disabled','true')};
- next.setAttribute('aria-disabled','true');
- file.onchange=()=>{for(const f of file.files){const img=document.createElement('img');img.src=URL.createObjectURL(f);wrap.append(img);previews++}upd()};
- title.oninput=upd;price.oninput=upd;
- const picker=(label,options,searchable,pick)=>{const b=button(label,()=>{const lb=document.createElement('div');lb.role='listbox';if(searchable){const si=document.createElement('input');lb.append(si)}for(const o of options){const op=document.createElement('div');op.role='option';op.textContent=o;op.onclick=()=>{pick(o);lb.remove();upd()};lb.append(op)}document.body.append(lb)},label);return b};
- wrap.append(title,price,desc,file,picker('Condition',['New','Used - like new','Used - good','Used - fair'],false,v=>cond=v),picker('Category',['Furniture','Electronics','Clothing'],true,v=>cat=v),next);
- main.append(wrap);
-}else if(/^\/marketplace\/item\/\d+\/?$/.test(location.pathname)){
- const wrap=document.createElement('div');
- const h=document.createElement('h2');h.textContent='Wooden chair';wrap.append(h);
- const price=document.createElement('div');price.textContent='$40';wrap.append(price);
- wrap.append(button('Message',()=>{
-  const d=dialog();const log=document.createElement('div');log.role='log';d.append(log);
-  const tb=document.createElement('div');tb.role='textbox';tb.contentEditable='true';d.append(tb);
-  tb.onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();const m=document.createElement('div');m.role='article';m.textContent=tb.innerText.trim();log.append(m);tb.innerText=''}};
- }));
- main.append(wrap);
 }else if(location.pathname==='/marketplace/search/'){
  const wrap=document.createElement('div');
  const mk=(id,t,p,l)=>{const a=document.createElement('a');a.href='/marketplace/item/'+id+'/';for(const s of [t,p,l]){const sp=document.createElement('span');sp.textContent=s;a.append(sp)}return a};
