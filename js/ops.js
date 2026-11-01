@@ -9,11 +9,27 @@
  // scroll the page until `collect()` yields n rows or growth stalls
  const gather=async(n,collect,ms=25000,sc=null)=>{
   const t0=Date.now();let last=0,stall=0;const map=new Map();
+  // The end of a list, as opposed to a pause while more loads: the scroller
+  // sits pinned to its bottom and neither its height nor the row count moved
+  // across settled rechecks — the same exhaustion test the chat-list scan
+  // uses. Without it every short list paid the full 14-round stall tail.
+  let endH=-1,endSeen=-1,endRounds=0;
+  const metrics=el=>{
+   if(el)return {h:el.scrollHeight,pos:el.scrollTop,clientH:el.clientHeight,bottom:el.scrollTop+el.clientHeight>=el.scrollHeight-2};
+   const de=document.documentElement;
+   return {h:de.scrollHeight,pos:window.scrollY,clientH:window.innerHeight,bottom:window.scrollY+window.innerHeight>=de.scrollHeight-2};
+  };
   while(Date.now()-t0<ms){
    for(const r of collect())if(!map.has(r.k))map.set(r.k,r);
    if(map.size>=n)break;
    if(map.size===last){if(++stall>=14)break;}else{stall=0;last=map.size;}
    const el=typeof sc==='function'?sc():sc;
+   const m=metrics(el);
+   // only trust the bottom when scrolling demonstrably works on this
+   // scroller (it moved, or there is nothing to scroll): a wrong scroller
+   // must fall back to the stall tail, never truncate the list
+   if(m.bottom&&m.h===endH&&map.size===endSeen&&(m.pos>0||m.h<=m.clientH+2)){if(++endRounds>=3)break;}
+   else{endRounds=0;endH=m.h;endSeen=map.size;}
    if(el)el.scrollTop+=el.clientHeight*0.8;else window.scrollBy(0,innerHeight*0.8);
    await sleep(220);
   }
@@ -57,7 +73,15 @@
  F.searchFriends=async(n)=>{
   const chip=await waitFor(()=>[...document.querySelectorAll('[role=main] [role=button],[role=main] [role=switch],[role=main] [role=checkbox]')].find(b=>/^(Friends|Bạn bè|Amis)$/i.test(clean(b.innerText||b.getAttribute('aria-label')||''))),10000);
   let note;
-  if(chip){chip.click();await sleep(1800);}else note='friends filter not offered by facebook here; showing all people';
+  if(chip){
+   // wait for the filter to visibly apply (chip state, results swap) instead
+   // of a flat 1.8 s; the cap stays as the timeout when nothing observable
+   // changes
+   const feedEl=document.querySelector('[role=main] [role=feed]');
+   const hadStranger=!!document.querySelector('[data-stranger]');
+   chip.click();
+   await waitFor(()=>chip.getAttribute('aria-pressed')==='true'||chip.getAttribute('aria-checked')==='true'||(hadStranger&&!document.querySelector('[data-stranger]'))||(feedEl&&document.querySelector('[role=main] [role=feed]')!==feedEl),1800,100);
+  }else note='friends filter not offered by facebook here; showing all people';
   const r=await F.search(n);
   if(note&&!r.err)r.note=r.note?r.note+'; '+note:note;
   return r;
