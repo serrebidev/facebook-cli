@@ -127,12 +127,24 @@
  // comma BEFORE the time. Colon+space separates sender from text (the time's own colon has no space).
  const TIMERE=/\d{1,2}[:h.]\d{2}(?:\s?[AaPp]\.?[Mm]\.?)?/;
  const parseLabel=labels=>{
-  const lab=labels.find(l=>{const tm=TIMERE.exec(l),c=l.indexOf(', ');return tm&&c>tm.index;})||'';
-  const tm=TIMERE.exec(lab);
-  const colon=lab.indexOf(': ');
-  const before=colon>=0?lab.slice(0,colon):lab;
-  const comma=before.lastIndexOf(', ');
-  return {t:tm?tm[0]:'',sender:comma>=0?before.slice(comma+2).trim():'',text:colon>=0?clean(lab.slice(colon+2)):''};
+  // The sender separator is the LAST ", " before the colon, not the first
+  // comma in the label: the timestamp of anything older than today carries
+  // its own comma ("At September 5, 2026, 10:24 PM, You: hi"), and a finder
+  // that wants a comma after the time never saw a date's label, so those
+  // messages read as empty lines. A label whose only comma sits before the
+  // time stays the secondary "Nhập, Tin nhắn do ... gửi lúc 18:43: x" form and
+  // is skipped.
+  const pick=labels.map(l=>{
+   const tm=TIMERE.exec(l);
+   if(!tm)return null;
+   const colon=l.indexOf(': ');
+   const sep=l.lastIndexOf(', ',colon<0?l.length:colon);
+   return sep>tm.index?{l,tm,colon,sep}:null;
+  }).find(Boolean);
+  if(!pick)return {t:'',sender:'',text:''};
+  const {l,tm,colon,sep}=pick;
+  const before=l.slice(sep+2,colon<0?l.length:colon).trim();
+  return {t:tm[0],sender:before,text:colon>=0?clean(l.slice(colon+2)):''};
  };
  window.__fb={parseLabel,mergeChunks,press,sleep,clean,vtext,waitFor,visible,enabled,dismissRestore,postCards,postText,canon,groupPath,addGroup,TIME,SPON,ACT,trunc,scrollerOf,num};
 })();
