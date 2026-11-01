@@ -26,6 +26,20 @@ assert.strictEqual(F.groupPath('/groups/hikers.uk?__cft__[0]=x'), '/groups/hiker
 assert.strictEqual(F.groupPath('https://www.facebook.com/groups/123/posts/456'), null);
 assert.strictEqual(F.groupPath('https://www.facebook.com/groups/feed/'), null);
 assert.strictEqual(F.groupPath('https://www.facebook.com/groups/joins'), null);
+assert.strictEqual(F.profilePath('https://www.facebook.com/some.user'), '/some.user');
+assert.strictEqual(F.profilePath('/profile.php?id=123&sk=about'), '/profile.php?id=123');
+assert.strictEqual(F.profilePath('https://www.facebook.com/groups/123456'), null);
+assert.strictEqual(F.profilePath('https://www.facebook.com/some.user/posts/456'), null);
+assert.strictEqual(F.profilePath('https://www.facebook.com/watch?v=1'), null);
+assert.strictEqual(F.profilePath('https://www.facebook.com/photo.php?fbid=1'), null);
+assert.strictEqual(F.profilePath('/people/Alice-Smith/61512345678901/'), '/profile.php?id=61512345678901');
+assert.strictEqual(F.profilePath('https://m.facebook.com/people/Alice-Smith/61512345678901'), '/profile.php?id=61512345678901');
+assert.strictEqual(F.profilePath('/profile.php?id=abc'), null);
+assert.strictEqual(F.profilePath('https://example.org/stranger'), null);
+assert.strictEqual(F.profilePath('https://notfacebook.com/stranger'), null);
+assert.strictEqual(F.profilePath('https://l.facebook.com/l.php?u=https%3A%2F%2Fexample.org'), null);
+assert.strictEqual(F.profilePath('https://www.facebook.com/l.php?u=x'), null);
+console.log('js profilePath ok');
 assert.strictEqual(F.groupPath('https://www.facebook.com/somepage'), null);
 {const m=new Map();
  F.addGroup(m,'/groups/1',['Paris Hikers','Public group · 2K members']);
@@ -151,4 +165,61 @@ console.log('js removed-newest ok');
   assert.strictEqual(lazy.chats.length, 40); // pagination that lands after reaching the bottom is awaited
   assert.strictEqual(lazy.complete, true);
   console.log('js chats ok');
+})().catch(e => { console.error(e); process.exit(1); });
+
+// post view: each comment's author reference comes only from that comment's own author link
+(async () => {
+  const vm = require('vm');
+  class El {
+    constructor(attrs = {}, text = []) { this.attrs = attrs; this.text = text; this.children = []; this.parentElement = null; }
+    add(c) { c.parentElement = this; this.children.push(c); return c; }
+    getAttribute(k) { return this.attrs[k] ?? null; }
+    matches(sel) {
+      if (sel === 'a[href]') return this.attrs.tag === 'a' && this.attrs.href !== undefined;
+      if (sel === '[role=article][aria-label]') return this.attrs.role === 'article' && this.attrs['aria-label'] !== undefined;
+      const m = /^\[([^=]+)=([^\]]+)\]$/.exec(sel);
+      return !!m && this.attrs[m[1]] === m[2];
+    }
+    querySelectorAll(sel) { return this.children.flatMap(c => [...(c.matches(sel) ? [c] : []), ...c.querySelectorAll(sel)]); }
+    querySelector(sel) { return this.querySelectorAll(sel)[0] || null; }
+    closest(sel) { return this.matches(sel) ? this : this.parentElement?.closest(sel) || null; }
+    flat() { return [this, ...this.children.flatMap(c => c.flat())]; }
+    compareDocumentPosition(o) { const all = this.top().flat(); return all.indexOf(o) > all.indexOf(this) ? 4 : 2; }
+    top() { return this.parentElement ? this.parentElement.top() : this; }
+  }
+  const link = (href, name) => new El({ tag: 'a', href }, name ? [name] : []);
+  const comment = (author, authorHref, bodyLinks = [], replies = []) => {
+    const a = new El({ role: 'article', 'aria-label': 'Comment by ' + author }, [author, '1h', 'Hello Bob', 'Like', 'Reply']);
+    const head = a.add(new El());
+    if (authorHref) head.add(link(authorHref, author));
+    head.add(link('/fixture/posts/1?comment_id=9', '1h'));
+    const body = a.add(new El());
+    for (const h of bodyLinks) body.add(link(h, 'Bob'));
+    for (const r of replies) a.add(r);
+    return a;
+  };
+  const view = async (comments, n = comments.length) => {
+    const root = new El({ role: 'main' }, ['Fixture Author', '1h']);
+    root.add(new El()).add(new El()).add(new El({ 'data-ad-rendering-role': 'profile_name' }));
+    for (const c of comments) root.add(c);
+    const doc = new El(); doc.add(root);
+    const ctx = vm.createContext({ window: {}, document: doc, location: { href: 'https://www.facebook.com/fixture/posts/1' }, Node: { DOCUMENT_POSITION_FOLLOWING: 4 }, URL, setTimeout });
+    vm.runInContext(src, ctx);
+    const G = ctx.window.__fb;
+    Object.assign(G, { sleep: async () => {}, waitFor: async f => f(), vtext: e => e?.text || [], num: () => 0, scrollerOf: () => null });
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '../js/ops.js'), 'utf8'), ctx);
+    return Array.from((await G.postView(n)).lines).filter(l => /^cu?\t/.test(l));
+  };
+  assert.deepStrictEqual(await view([comment('Alice', '/alice', ['/bob'])]), ['cu\t/alice', 'c\tAlice\t1h\tHello Bob']);
+  assert.deepStrictEqual(await view([comment('Alice', '/people/Alice-Smith/61512345678901/')]), ['cu\t/profile.php?id=61512345678901', 'c\tAlice\t1h\tHello Bob']);
+  assert.deepStrictEqual(await view([comment('Anonymous participant', null, ['/bob', 'https://example.org/stranger'])]), ['c\tAnonymous participant\t1h\tHello Bob']);
+  assert.deepStrictEqual(await view([comment('Anonymous participant', null, [], [comment('Bob', '/bob')])], 1), ['c\tAnonymous participant\t1h\tHello Bob']);
+  {
+    const parent = new El({ role: 'article', 'aria-label': 'Comment by Alice' }, ['Alice', '1h', 'Hello', 'Like', 'Reply']);
+    parent.add(comment('Alice', '/other.alice'));
+    assert.deepStrictEqual(await view([parent], 1), ['c\tAlice\t1h\tHello']);
+  }
+  assert.deepStrictEqual(await view([comment('Bob', null, ['/different.bob'])]), ['c\tBob\t1h\tHello Bob']);
+  assert.deepStrictEqual(await view([comment('Anonymous participant', 'https://l.facebook.com/l.php?u=x')]), ['c\tAnonymous participant\t1h\tHello Bob']);
+  console.log('js post view comment refs ok');
 })().catch(e => { console.error(e); process.exit(1); });
