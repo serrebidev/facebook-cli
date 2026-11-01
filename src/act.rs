@@ -306,9 +306,11 @@ pub async fn delete(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
 /// friendship or a pending request is reported, not re-clicked.
 pub async fn friend_add(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
     let a = parse(args, &[], &[])?;
-    let spec = a.pos.first().ok_or("usage: friend-add <who>")?;
+    let spec = a
+        .pos
+        .first()
+        .ok_or("usage: friend-add <ref|url|@handle|id>")?;
     let b: Arc<Browser> = d.browser(out).await?;
-    let p = crate::ops::profile_path(d, &b, spec).await?;
     let gen0 = b.generation.load(std::sync::atomic::Ordering::SeqCst);
     // mutations hold the shared side of the account lock; an account import takes the exclusive side
     let _account = d.account.read().await;
@@ -317,6 +319,8 @@ pub async fn friend_add(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
             "the account changed while this command waited; nothing was done, try again".into(),
         );
     }
+    // a plain name is never searched: the first hit may be a different person
+    let p = crate::ops::profile_path_explicit(d, &b, spec).await?;
     let t = b.acquire().await?;
     same_account(&b, gen0)?;
     let text_of = |v: &Value| -> Res<String> {
@@ -327,7 +331,7 @@ pub async fn friend_add(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
     };
     let r = async {
         b.goto(&t, &format!("https://www.facebook.com{p}")).await?;
-        let state = text_of(&b.eval(&t, "window.__fb.friendState()").await?)?;
+        let state = text_of(&b.eval(&t, "window.__fb.friendWait()").await?)?;
         match state.as_str() {
             "friends" => {
                 out.line("already friends");
@@ -338,6 +342,9 @@ pub async fn friend_add(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
                 return Ok(());
             }
             "can-add" => {}
+            "ambiguous" => {
+                return Err("several friend controls on this page; nothing was clicked".into());
+            }
             _ => return Err("no Add friend button on this profile".into()),
         }
         same_account(&b, gen0)?;
@@ -357,7 +364,6 @@ pub async fn friend_add(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
     b.release(t).await;
     r
 }
-
 
 pub async fn comment(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
     let a = parse(args, &[], &[])?;
