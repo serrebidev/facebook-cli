@@ -707,8 +707,23 @@ async fn submit(
     Ok(())
 }
 
+/// `reply` is `send` that must quote a message: without a selector it would
+/// silently become an ordinary send, so refuse before any browser work.
+fn require_reply_selector(args: &[String]) -> Res<()> {
+    let a = crate::ops::parse(args, &["file", "img", "match"], &["dry", "fuzzy"])?;
+    if a.opt("match").is_none_or(|m| m.trim().is_empty()) {
+        return Err("usage: reply <chat> <text> --match text [--file path]...".into());
+    }
+    Ok(())
+}
+
+pub async fn reply(d: &Daemon, args: &[String], cwd: &str, out: &Out) -> Res<()> {
+    require_reply_selector(args)?;
+    send(d, args, cwd, out).await
+}
+
 pub async fn send(d: &Daemon, args: &[String], cwd: &str, out: &Out) -> Res<()> {
-    let a = crate::ops::parse(args, &["file", "img"], &["dry", "fuzzy"])?;
+    let a = crate::ops::parse(args, &["file", "img", "match"], &["dry", "fuzzy"])?;
     let dry = a.flag("dry");
     // `--img` is the older name of `--file`; both attach any file, in the order given. Only the
     // metadata is checked here; each file is read when its turn comes (memory stays bounded).
@@ -756,6 +771,19 @@ pub async fn send(d: &Daemon, args: &[String], cwd: &str, out: &Out) -> Res<()> 
             b.eval(&t, "window.__fb.clearDraft()").await?;
             return Ok(());
         }
+        // `fb reply` is send with --match: quote the matched message above
+        // the composer first; everything after is the ordinary send path.
+        // The quote rides on the first message submitted (a file, if any).
+        let mut replied = String::new();
+        if let Some(m) = a.opt("match") {
+            let info = b
+                .eval(&t, &format!("window.__fb.msgReplyOpen({})", json!(m)))
+                .await?;
+            match &info {
+                Value::String(e) => return Err(e.clone()),
+                v => replied = v["text"].as_str().unwrap_or("").to_string(),
+            }
+        }
         // One message per file, then the text: every step must show up as exactly its own new outgoing
         // message, so a missing attachment can never be confirmed by another message.
         for (k, (name, path)) in files.iter().enumerate() {
@@ -784,6 +812,9 @@ pub async fn send(d: &Daemon, args: &[String], cwd: &str, out: &Out) -> Res<()> 
                     format!("{e} (the files were already sent)")
                 }
             })?;
+        }
+        if !replied.is_empty() {
+            out.line(format!("replied\t{}", one_line(&replied)));
         }
         match &target.name {
             Some(n) => out.line(format!("sent\t{n}")),
@@ -939,10 +970,19 @@ pub async fn unlock(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
     let t = b.acquire().await?;
     let r = async {
         b.goto(&t, "https://www.facebook.com/messages/t/").await?;
-        match b.eval(&t, "window.__fb.pinFocus()").await? {
-            Value::Bool(true) => {}
-            Value::String(s) => return Err(s),
-            _ => return Err("unexpected".into()),
+        if b.eval(&t, "window.__fb.pinFocus(20000)").await? != Value::Bool(true) {
+            // The restore prompt is summoned by the messages page itself
+            // (verified on the user's account, 2026-10-31: it reappears on
+            // a fresh load even after being closed). One reload re-summons
+            // it when the first load raced or the prompt was mid-dismissal.
+            // facebook.com/secure-storage is NOT a fallback: on a real
+            // account it redirects to an unrelated business Page.
+            b.goto(&t, "https://www.facebook.com/messages/t/").await?;
+            match b.eval(&t, "window.__fb.pinFocus(20000)").await? {
+                Value::Bool(true) => {}
+                Value::String(s) => return Err(s),
+                _ => return Err("unexpected".into()),
+            }
         }
         // Type the PIN as real keystrokes, one digit at a time. A single
         // Input.insertText lands in only the first box of the surfaces that
@@ -953,17 +993,33 @@ pub async fn unlock(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
             b.key(&t, &c.to_string(), &format!("Digit{c}"), 48 + d, 0)
                 .await?;
         }
-        match b.eval(&t, "window.__fb.pinDone()").await? {
-            Value::Bool(true) => {}
-            Value::String(s) => return Err(s),
-            _ => return Err("unexpected".into()),
+        // Wait for the restore to actually finish (budget 4 minutes, covered
+        // by the unlock command's own allowance in cmd.rs): the PIN
+        // auto-submits into a "Verifying your PIN" state, and reporting
+        // success early would hide a restore that is still running.
+        // 'VERIFYING' at budget end is not an error: the PIN was accepted,
+        // Facebook is still working.
+        match b.eval(&t, "window.__fb.pinDone(240000)").await? {
+            Value::Bool(true) => {
+                out.line("unlocked");
+                Ok(false)
+            }
+            Value::String(s) if s == "VERIFYING" => {
+                out.line("PIN accepted; Facebook is still restoring your chat history — it finishes in the background as long as the browser stays open");
+                Ok(true)
+            }
+            Value::String(s) => Err(s),
+            _ => Err("unexpected".into()),
         }
-        out.line("unlocked (history restores in the background)");
-        Ok(())
     }
     .await;
-    b.release(t).await;
-    r
+    // the restore runs inside this page: keep a still-verifying one awake
+    if r == Ok(true) {
+        b.park_busy(t).await;
+    } else {
+        b.release(t).await;
+    }
+    r.map(|_| ())
 }
 
 /// Remove (for everyone) your most recent message in a chat, optionally the latest one containing `--match`.
@@ -1021,6 +1077,76 @@ pub async fn unsend(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
     }
     .await;
     // the page may be left mid-dialog on failure or dry run: never reuse it
+    if matches!(r, Ok(true)) {
+        b.release_as(t, "messages").await;
+    } else {
+        b.close(t).await;
+    }
+    r.map(|_| ())
+}
+
+/// React to one message in a chat (the newest, or the newest containing
+/// --match text). Mirrors unsend's shape: resolve, open, one JS step that
+/// finds the message's toolbar and picks the emoji, verify by re-reading
+/// the message's reactions inside that same step.
+pub async fn msgreact(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
+    let a = crate::ops::parse(args, &["match"], &["fuzzy"])?;
+    let (spec, reaction) = match a.pos.split_first() {
+        Some((s, rest)) if rest.len() == 1 => (s.as_str(), rest[0].as_str()),
+        _ => {
+            return Err(
+                "usage: msgreact <chat> <like|love|care|haha|wow|sad|angry> [--match text]".into(),
+            );
+        }
+    };
+    if !matches!(
+        reaction,
+        "like" | "love" | "care" | "haha" | "wow" | "sad" | "angry"
+    ) {
+        return Err(format!("unknown reaction: {reaction}"));
+    }
+    let b = d.browser(out).await?;
+    let gen0 = b.generation.load(std::sync::atomic::Ordering::SeqCst);
+    let _account = d.account.read().await;
+    if b.generation.load(std::sync::atomic::Ordering::SeqCst) != gen0 {
+        return Err(
+            "the account changed while this command waited; nothing was done, try again".into(),
+        );
+    }
+    let target = resolve(d, &b, spec).await?;
+    require_exact(d, &target, spec, a.flag("fuzzy"))?;
+    let t = b.acquire_kind("messages").await?;
+    if b.generation.load(std::sync::atomic::Ordering::SeqCst) != gen0 {
+        return Err(
+            "the account changed while this command waited; nothing was done, try again".into(),
+        );
+    }
+    let r = async {
+        open_thread(&b, &t, &target.path).await?;
+        let m = a.opt("match").unwrap_or("");
+        // find the message and open its picker first; the click that applies
+        // the reaction is the one step a cancelled client must still stop
+        let open = b
+            .eval(
+                &t,
+                &format!("window.__fb.msgReactOpen({}, {})", json!(m), json!(reaction)),
+            )
+            .await?;
+        if let Value::String(e) = &open {
+            return Err(e.clone());
+        }
+        if out.cancelled() {
+            return Err("cancelled by client; nothing was reacted".into());
+        }
+        let info = b.eval(&t, "window.__fb.msgReactConfirm()").await?;
+        let text = match &info {
+            Value::String(e) => return Err(e.clone()),
+            v => v["text"].as_str().unwrap_or("").to_string(),
+        };
+        out.line(format!("reacted\t{}", one_line(&text)));
+        Ok(true)
+    }
+    .await;
     if matches!(r, Ok(true)) {
         b.release_as(t, "messages").await;
     } else {
@@ -1217,6 +1343,24 @@ mod tests {
             ("A B C", "x y")
         );
         assert!(back.list[0].unread && !back.list[0].group && back.list[1].e2ee());
+    }
+
+    #[test]
+    fn reply_needs_a_nonblank_match_selector() {
+        let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let usage = "usage: reply <chat> <text> --match text [--file path]...";
+        assert_eq!(
+            require_reply_selector(&args(&["42", "answer"])),
+            Err(usage.into())
+        );
+        assert_eq!(
+            require_reply_selector(&args(&["42", "answer", "--match", "  "])),
+            Err(usage.into())
+        );
+        assert_eq!(
+            require_reply_selector(&args(&["42", "answer", "--match=lunch"])),
+            Ok(())
+        );
     }
 
     #[test]

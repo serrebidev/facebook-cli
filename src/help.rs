@@ -9,6 +9,7 @@ READ
   profile [who]                      key<TAB>value lines
   friends [who] [-n 30]              name, ref, mutual friends
   groups [-n 100] [--urls]           groups you have joined: name, ref, privacy and size
+  members <group> [-n 200] [--urls]  people in a group: name, ref, role or join info
   search <q> [--type top|posts|people|friends|photos|videos|pages|places|groups|events|marketplace] [--match text]... [-n 10]   top = All (default); friends = people narrowed by the Friends chip; rows carry a kind (post, profile, page, group, photo, video, event, place, listing); match visible clues
   stories <who> [--out dir] [-n N]  protected downloads, all visible stories by default
   photos <who> [--out dir] [-n 10 | --all]  protected profile-photo downloads
@@ -19,6 +20,8 @@ MESSENGER
   read <chat> [-n 20]                `# date` lines, then `HH:MM sender: text` ([img] [file], {emoji} reactions)
   send <chat> <text> [--file path]... [--dry]   file or image, 25MB max each, one message per file then the text. Options BEFORE `--`; after `--` is text. Exact nickname or unique friend name (or use profile ref / @handle; --fuzzy for partial chat names)
   unsend <chat> [--match text] [--dry]   remove your newest loaded message (containing text) for everyone
+  msgreact <chat> <like|love|care|haha|wow|sad|angry> [--match text]   react to the newest message (or the newest containing text)
+  reply <chat> <text> --match text [--file path]...   reply to the message containing text (the first message sent quotes it), then send like `send`
   unlock [-]                         once: restore end-to-end encrypted chats; PIN read from $FB_PIN or stdin
 ACT
   post <text> [--img file]... [--video file]... [--to public|friends|me]   confirmed: posted<TAB>ref<TAB>path
@@ -28,6 +31,7 @@ ACT
   group-join <group>                 join a group (reports joined / requested; membership questions come back as questions<TAB>n then q<TAB>text lines)
   group-apply <group> <answer>...    join a group by answering its membership questions in order (a choice question takes the option text)
   group-leave <group>                leave a group (reports not-a-member; a pending request is left alone)
+  friend-add <ref|url|@handle|id>    send a friend request (reports existing friends / pending requests)
 BROWSER (fallback; named tabs are separate from normal commands)
   page <name> open <url> | snapshot [filter]   bounded text + refs; max 6 pages
   page <name> stories [story-url]     experimental story page; blocks known seen requests, not a privacy guarantee
@@ -41,3 +45,15 @@ OTHER
   --version | status | stop (daemon; hidden browser keeps running) | quit (daemon + hidden browser) | eval [url] <js> | shot <file> [url] | ax [url]
 Env (read by the daemon when it starts: `fb quit` to apply a change): FB_TIMEOUT=sec per command (150), FB_PROFILE=dir (non-WSL), FB_CDP=port|ws-url (use your own Chrome).
 Each command runs in its own tab: invoke several at once (shell & or batch) for concurrency.";
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn help_has_no_merge_conflict_markers() {
+        for line in super::HELP.lines() {
+            for marker in ["<<<<<<<", "=======", ">>>>>>>"] {
+                assert!(!line.starts_with(marker), "{line}");
+            }
+        }
+    }
+}

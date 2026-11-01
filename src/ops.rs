@@ -327,7 +327,6 @@ async fn person_path(b: &std::sync::Arc<Browser>, who: &str) -> Res<String> {
 }
 
 /// A group spec (ref, url, path, vanity or id) → "/groups/<id>".
-/// Rejects the reserved /groups/ sections so "joins" can never become a group.
 pub fn group_path(d: &Daemon, spec: &str) -> Res<String> {
     let path = if let Some(p) = d.refs.get(spec) {
         p
@@ -336,18 +335,7 @@ pub fn group_path(d: &Daemon, spec: &str) -> Res<String> {
     } else {
         format!("/groups/{}", spec.trim_start_matches('@'))
     };
-    let seg = path
-        .strip_prefix("/groups/")
-        .and_then(|rest| rest.split('/').next())
-        .filter(|s| {
-            !s.is_empty()
-                && !matches!(
-                    *s,
-                    "feed" | "discover" | "joins" | "create" | "search" | "yourgroups"
-                )
-        })
-        .ok_or_else(|| format!("'{spec}' is not a group"))?;
-    Ok(format!("/groups/{seg}"))
+    group_base(&path).ok_or_else(|| format!("'{spec}' is not a group"))
 }
 
 pub async fn search(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
@@ -361,8 +349,17 @@ pub async fn search(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
     }
     let ty = a.opt("type").unwrap_or("top");
     if ![
-        "top", "posts", "people", "friends", "photos", "videos", "pages", "places", "groups",
-        "events", "marketplace",
+        "top",
+        "posts",
+        "people",
+        "friends",
+        "photos",
+        "videos",
+        "pages",
+        "places",
+        "groups",
+        "events",
+        "marketplace",
     ]
     .contains(&ty)
     {
@@ -374,37 +371,35 @@ pub async fn search(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
     }
     let b = d.browser(out).await?;
     let n = a.n.unwrap_or(10);
-    match ty {
+    let clues = serde_json::json!(clues);
+    let (url, call) = match ty {
         // friends is the people tab narrowed by its own Friends chip
-        "friends" => {
-            let url = format!("https://www.facebook.com/search/people/?q={}", enc(&q));
-            let expression = format!(
-                "window.__fb.searchFriends({},{}).then(JSON.stringify)",
-                n,
-                serde_json::json!(clues)
-            );
-            run_expression(d, &b, out, &url, &expression).await
-        }
+        "friends" => (
+            format!("https://www.facebook.com/search/people/?q={}", enc(&q)),
+            format!("searchFriends({n},{clues})"),
+        ),
         // marketplace search lives on its own surface with listing cards
-        "marketplace" => {
-            let url = format!(
+        "marketplace" => (
+            format!(
                 "https://www.facebook.com/marketplace/search/?query={}",
                 enc(&q)
-            );
-            run_js(d, &b, out, &url, "marketSearch", n).await
-        }
+            ),
+            format!("marketSearch({n},{clues})"),
+        ),
         // the All tab and every other vertical share the /search/<type>/ surface
-        _ => {
-            let url = format!("https://www.facebook.com/search/{ty}/?q={}", enc(&q));
-            let expression = format!(
-                "window.__fb.search({},{},{}).then(JSON.stringify)",
-                n,
-                serde_json::json!(clues),
-                serde_json::json!(ty)
-            );
-            run_expression(d, &b, out, &url, &expression).await
-        }
-    }
+        _ => (
+            format!("https://www.facebook.com/search/{ty}/?q={}", enc(&q)),
+            format!("search({n},{clues},{})", serde_json::json!(ty)),
+        ),
+    };
+    run_expression(
+        d,
+        &b,
+        out,
+        &url,
+        &format!("window.__fb.{call}.then(JSON.stringify)"),
+    )
+    .await
 }
 
 pub async fn friends(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
@@ -459,6 +454,83 @@ pub async fn groups(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
                 "{}\t{id}\t{}",
                 get(0).replace(['\t', '\n'], " "),
                 get(2).replace(['\t', '\n'], " ")
+            ));
+        }
+        if let Some(note) = v["note"].as_str() {
+            out.err(format!("{note}\n"));
+        }
+        Ok(())
+    }
+    .await;
+    b.release(t).await;
+    r
+}
+/// `/groups/<id>` from any path under a group, ignoring query and fragment.
+fn group_base(path: &str) -> Option<String> {
+    let path = path.split(['?', '#']).next().unwrap_or("");
+    let seg = path
+        .strip_prefix("/groups/")?
+        .split('/')
+        .next()
+        .filter(|s| {
+            !s.is_empty()
+                && !matches!(
+                    *s,
+                    "feed" | "discover" | "joins" | "create" | "search" | "yourgroups"
+                )
+        })?;
+    Some(format!("/groups/{seg}"))
+}
+
+/// The members of one group, from its members page
+/// (facebook.com/groups/<id>/members), gathered with scrolling like the
+/// joined-groups list. Rows: name, ref (or the profile URL with --urls),
+/// role / join info.
+pub async fn members(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
+    let a = parse(args, &[], &["urls"])?;
+    let spec = a
+        .pos
+        .first()
+        .ok_or("usage: members <group> [-n N] [--urls]")?;
+    let b = d.browser(out).await?;
+    let group = group_path(d, spec)?;
+    let t = b.acquire().await?;
+    let r = async {
+        b.goto(&t, &format!("https://www.facebook.com{group}/members"))
+            .await?;
+        let v = b
+            .eval(
+                &t,
+                &format!(
+                    "window.__fb.groupMembers({}).then(JSON.stringify)",
+                    a.n.unwrap_or(200)
+                ),
+            )
+            .await?;
+        let v: Value =
+            serde_json::from_str(v.as_str().unwrap_or("{}")).map_err(|e| e.to_string())?;
+        if let Some(e) = v["err"].as_str() {
+            return Err(e.to_string());
+        }
+        for row in v["rows"].as_array().cloned().unwrap_or_default() {
+            let cells: Vec<Value> = row.as_array().cloned().unwrap_or_default();
+            let get = |i: usize| cells.get(i).and_then(Value::as_str).unwrap_or("");
+            let (id, info) = match cells.get(1) {
+                Some(Value::Object(o)) => {
+                    let p = o.get("v").and_then(Value::as_str).unwrap_or("");
+                    let id = if a.flag("urls") {
+                        format!("https://www.facebook.com{p}")
+                    } else {
+                        d.refs.put('u', p)
+                    };
+                    (id, get(2))
+                }
+                _ => (get(1).to_owned(), get(2)),
+            };
+            out.line(format!(
+                "{}\t{id}\t{}",
+                get(0).replace(['\t', '\n'], " "),
+                info.replace(['\t', '\n'], " ")
             ));
         }
         if let Some(note) = v["note"].as_str() {
@@ -672,6 +744,35 @@ mod tests {
         ] {
             assert!(!is_post_path(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn group_base_ignores_query_fragment_and_subpaths() {
+        for (path, want) in [
+            ("/groups/123", Some("/groups/123")),
+            ("/groups/123/", Some("/groups/123")),
+            ("/groups/123?ref=share", Some("/groups/123")),
+            ("/groups/123/?ref=share", Some("/groups/123")),
+            ("/groups/123#about", Some("/groups/123")),
+            (
+                "/groups/hikers.uk/members/?a=1#b",
+                Some("/groups/hikers.uk"),
+            ),
+            ("/groups/feed", None),
+            ("/groups/feed/?x=1", None),
+            ("/groups/yourgroups/", None),
+            ("/groups/?ref=share", None),
+            ("/groups/", None),
+            ("/some.user", None),
+        ] {
+            assert_eq!(group_base(path).as_deref(), want, "{path}");
+        }
+        assert_eq!(
+            fb_path("https://www.facebook.com/groups/123?ref=share")
+                .and_then(|p| group_base(&p))
+                .as_deref(),
+            Some("/groups/123")
+        );
     }
 
     #[test]

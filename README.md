@@ -72,7 +72,8 @@ Run `fb help` for the exact list. `<who>` is `me`, a name, `@vanity`, an id, a U
 | `profile [who]` | key/value lines |
 | `friends [who] [-n 30]` | name, ref, mutual friends |
 | `groups [-n 100] [--urls]` | groups you have joined: name, ref (or URL with `--urls`), privacy and size |
-| `search <q> [--type people\|pages\|groups\|posts\|events] [--match text]... [-n 10]` | name, ref, visible info |
+| `members <group> [-n 200] [--urls]` | people in a group: name, ref (or URL with `--urls`), role or join info |
+| `search <q> [--type top\|posts\|people\|friends\|photos\|videos\|pages\|places\|groups\|events\|marketplace] [--match text]... [-n 10]` | name, ref (or full URL for photos, videos, events, places and listings), visible info, kind; `top` (All) is the default, `friends` is people narrowed by the Friends chip |
 | `stories <who> [--out dir] [-n N]` | download visible stories in a protected session |
 | `photos <who> [--out dir] [-n 10 \| --all]` | download visible profile photos in a protected session |
 | `notifs [-n]` | time, unread flag, text, ref |
@@ -87,10 +88,14 @@ Run `fb help` for the exact list. `<who>` is `me`, a name, `@vanity`, an id, a U
 
 | Act | |
 |---|---|
-| `post <text> [--img file]... [--to public\|friends\|me]` | verified `posted<TAB>ref<TAB>path` receipt; directly usable by `view`/`delete` |
+| `post <text> [--img file]... [--video file]... [--to public\|friends\|me]` | verified `posted<TAB>ref<TAB>path` receipt; directly usable by `view`/`delete` |
 | `comment <post> <text>` | |
 | `react <post> [like\|love\|care\|haha\|wow\|sad\|angry\|none]` | idempotent |
 | `delete <post>` | your own posts |
+| `group-join <group>` | idempotent; reports joined or requested; membership questions come back as `questions<TAB>n` then `q<TAB>text` lines |
+| `group-apply <group> <answer>...` | join by answering the membership questions in displayed order; a choice question takes the option text |
+| `group-leave <group>` | idempotent; a pending request is left alone |
+| `friend-add <ref\|url\|@handle\|id>` | idempotent; reports existing friends or a pending request; plain names are refused (search first, use the ref) |
 
 | Other | |
 |---|---|

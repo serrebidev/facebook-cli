@@ -36,6 +36,7 @@ pub fn mime_of(name: &str) -> &'static str {
         "webp" => "image/webp",
         "mp4" => "video/mp4",
         "mov" => "video/quicktime",
+        "webm" => "video/webm",
         "pdf" => "application/pdf",
         _ => "image/jpeg",
     }
@@ -63,11 +64,7 @@ pub(crate) async fn attach_files(
         ok(&b
             .eval(
                 t,
-                &format!(
-                    "window.__fb.composeAttach({},{})",
-                    json!(name),
-                    json!(mime)
-                ),
+                &format!("window.__fb.composeAttach({},{})", json!(name), json!(mime)),
             )
             .await?)?;
     }
@@ -310,6 +307,68 @@ pub async fn delete(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
     b.release(t).await;
     r
 }
+/// Send a friend request from a profile page. Idempotent: an existing
+/// friendship or a pending request is reported, not re-clicked.
+pub async fn friend_add(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
+    let a = parse(args, &[], &[])?;
+    let spec = a
+        .pos
+        .first()
+        .ok_or("usage: friend-add <ref|url|@handle|id>")?;
+    let b: Arc<Browser> = d.browser(out).await?;
+    let gen0 = b.generation.load(std::sync::atomic::Ordering::SeqCst);
+    // mutations hold the shared side of the account lock; an account import takes the exclusive side
+    let _account = d.account.read().await;
+    if b.generation.load(std::sync::atomic::Ordering::SeqCst) != gen0 {
+        return Err(
+            "the account changed while this command waited; nothing was done, try again".into(),
+        );
+    }
+    // a plain name is never searched: the first hit may be a different person
+    let p = crate::ops::profile_path_explicit(d, &b, spec).await?;
+    let t = b.acquire().await?;
+    same_account(&b, gen0)?;
+    let text_of = |v: &Value| -> Res<String> {
+        match v {
+            Value::String(s) => Ok(s.clone()),
+            other => Err(format!("unexpected friend button state: {other}")),
+        }
+    };
+    let r = async {
+        b.goto(&t, &format!("https://www.facebook.com{p}")).await?;
+        let state = text_of(&b.eval(&t, "window.__fb.friendWait()").await?)?;
+        match state.as_str() {
+            "friends" => {
+                out.line("already friends");
+                return Ok(());
+            }
+            "requested" => {
+                out.line("friend request already sent");
+                return Ok(());
+            }
+            "can-add" => {}
+            "ambiguous" => {
+                return Err("several friend controls on this page; nothing was clicked".into());
+            }
+            _ => return Err("no Add friend button on this profile".into()),
+        }
+        same_account(&b, gen0)?;
+        if out.cancelled() {
+            return Err("cancelled by client; no request was sent".into());
+        }
+        let after = text_of(&b.eval(&t, "window.__fb.friendAdd()").await?)?;
+        match after.as_str() {
+            "requested" | "friends" => {
+                out.line("friend request sent");
+                Ok(())
+            }
+            other => Err(format!("friend request not confirmed (state: {other})")),
+        }
+    }
+    .await;
+    b.release(t).await;
+    r
+}
 
 pub async fn comment(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
     let a = parse(args, &[], &[])?;
@@ -389,7 +448,7 @@ pub async fn group_join(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
     same_account(&b, gen0)?;
     let r = async {
         b.goto(&t, &format!("https://www.facebook.com{p}")).await?;
-        let state = match b.eval(&t, "window.__fb.groupState()").await? {
+        let state = match b.eval(&t, "window.__fb.groupWait()").await? {
             Value::String(s) => s,
             other => return Err(format!("unexpected group button state: {other}")),
         };
@@ -459,7 +518,7 @@ pub async fn group_leave(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
     same_account(&b, gen0)?;
     let r = async {
         b.goto(&t, &format!("https://www.facebook.com{p}")).await?;
-        let state = match b.eval(&t, "window.__fb.groupState()").await? {
+        let state = match b.eval(&t, "window.__fb.groupWait()").await? {
             Value::String(s) => s,
             other => return Err(format!("unexpected group button state: {other}")),
         };
@@ -480,7 +539,18 @@ pub async fn group_leave(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
         if out.cancelled() {
             return Err("cancelled by client; you are still a member".into());
         }
-        let after = match b.eval(&t, "window.__fb.groupLeave()").await? {
+        let opened = match b.eval(&t, "window.__fb.groupLeaveOpen()").await? {
+            Value::String(s) => s,
+            other => return Err(format!("unexpected leave result: {other}")),
+        };
+        if opened != "ready" {
+            return Err(format!("leave not confirmed (state: {opened})"));
+        }
+        same_account(&b, gen0)?;
+        if out.cancelled() {
+            return Err("cancelled by client; you are still a member".into());
+        }
+        let after = match b.eval(&t, "window.__fb.groupLeaveConfirm()").await? {
             Value::String(s) => s,
             other => return Err(format!("unexpected leave result: {other}")),
         };
@@ -524,7 +594,7 @@ pub async fn group_apply(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
     same_account(&b, gen0)?;
     let r = async {
         b.goto(&t, &format!("https://www.facebook.com{p}")).await?;
-        let state = match b.eval(&t, "window.__fb.groupState()").await? {
+        let state = match b.eval(&t, "window.__fb.groupWait()").await? {
             Value::String(s) => s,
             other => return Err(format!("unexpected group button state: {other}")),
         };
@@ -544,12 +614,29 @@ pub async fn group_apply(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
         if out.cancelled() {
             return Err("cancelled by client; no answers were submitted".into());
         }
-        let after = match b
-            .eval(&t, &format!("window.__fb.groupApply({})", json!(answers)))
+        let filled = match b
+            .eval(&t, &format!("window.__fb.groupApplyFill({})", json!(answers)))
             .await?
         {
             Value::String(s) => s,
             other => return Err(format!("unexpected apply result: {other}")),
+        };
+        if let Some(want) = filled.strip_prefix("no-option:") {
+            return Err(format!(
+                "no option matches the answer '{want}'; nothing was submitted"
+            ));
+        }
+        let after = if filled == "ready" {
+            same_account(&b, gen0)?;
+            if out.cancelled() {
+                return Err("cancelled by client; no answers were submitted".into());
+            }
+            match b.eval(&t, "window.__fb.groupApplySubmit()").await? {
+                Value::String(s) => s,
+                other => return Err(format!("unexpected apply result: {other}")),
+            }
+        } else {
+            filled
         };
         match after.as_str() {
             "joined" => {
@@ -667,6 +754,14 @@ pub async fn react(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn video_files_keep_a_video_mime_type() {
+        assert_eq!(mime_of("clip.MP4"), "video/mp4");
+        assert_eq!(mime_of("clip.mov"), "video/quicktime");
+        assert_eq!(mime_of("story.webm"), "video/webm");
+        assert_eq!(mime_of("photo.jpg"), "image/jpeg");
+    }
 
     #[test]
     fn current_reaction_prefers_the_longest_matching_label() {

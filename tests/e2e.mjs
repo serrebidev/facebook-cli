@@ -36,7 +36,7 @@ try{
   if(m.method==='Target.detachedFromTarget'){detached.add(m.params.sessionId);cancelCalls(m.params.sessionId)}
   if(m.method==='Target.attachedToTarget'){const s=m.params.sessionId;targetSessions.set(m.params.targetInfo.targetId,s);report.push({attachedTarget:{type:m.params.targetInfo.type,url:m.params.targetInfo.url,waitingForDebugger:m.params.waitingForDebugger}});await call('Fetch.enable',{patterns:[{urlPattern:'*',requestStage:'Request'}]},s);if(m.params.waitingForDebugger)await call('Runtime.runIfWaitingForDebugger',{},s)}
   if(m.method==='Fetch.requestPaused'){const u=new URL(m.params.request.url);if(u.pathname==='/media-stall')mediaStallRequests++;if(u.pathname==='/photo.php'&&u.searchParams.has('fbid'))photoDetailRequests++;if(u.pathname==='/fixture/story.webm'||u.pathname==='/fixture/cross-origin.webm'){const range=Object.entries(m.params.request.headers).find(([k])=>k.toLowerCase()==='range')?.[1]?.match(/^bytes=(\d+)-(\d*)$/);const start=range?Number(range[1]):0,end=range?.[2]?Math.min(Number(range[2]),storyVideo.length-1):storyVideo.length-1;const headers=[{name:'Content-Type',value:'video/webm'},{name:'Accept-Ranges',value:'bytes'}];if(range)headers.push({name:'Content-Range',value:`bytes ${start}-${end}/${storyVideo.length}`});await call('Fetch.fulfillRequest',{requestId:m.params.requestId,responseCode:range?206:200,responseHeaders:headers,body:storyVideo.subarray(start,end+1).toString('base64')},m.sessionId);return}if(u.pathname==='/fixture/redirect-away'||u.pathname==='/stories/login'){await call('Fetch.fulfillRequest',{requestId:m.params.requestId,responseCode:302,responseHeaders:[{name:'Location',value:u.pathname==='/stories/login'?'https://www.facebook.com/login':'https://example.test/login'}]},m.sessionId);return}if(u.pathname==='/fixture/cancel-start')cancelHoverStarted=true;const page=u.pathname.startsWith('/stories/fixture')?fixture.replace('const main=',`window.__serverStorySeen=${storySeenRequests>0};const main=`):fixture;let body=Buffer.from(['www.facebook.com','example.test'].includes(u.hostname)?page:'').toString('base64');if(u.pathname==='/api/graphql/'){const form=m.params.request.method==='GET'?u.searchParams:new URLSearchParams(m.params.request.postData);const docId=u.searchParams.get('doc_id')||form.get('doc_id');if(form.get('__crn')==='duplicate-b')await new Promise(resolve=>setTimeout(resolve,800));if(docId==='111')storySeenRequests++;if(docId==='27028962643386672')photoQueryRequests++;const p=JSON.parse(form.get('variables'));const mode=p?.receiptMode;body=Buffer.from(docId==='27028962643386672'?JSON.stringify({padding:form.get('__crn')==='large'?'x'.repeat(8*1024*1024+1):'',data:{node:{id:'collection',pageItems:{edges:[{node:{__typename:'TimelineAppCollectionItem',node:{__typename:'Photo',id:['ranked','missing-page','three'].includes(form.get('__crn'))?'1':form.get('__crn')==='extra-b'?'3':'2',viewer_image:{uri:form.get('__crn')==='empty'?'':form.get('__crn')==='rehydrate'?'https://fixture.fbcdn.net/media':form.get('__crn')==='ranked'?'https://top.fbcdn.net/media':form.get('__crn')==='expired'?'https://fresh.fbcdn.net/media':form.get('__crn')==='missing-page'?'https://late.fbcdn.net/media':form.get('__crn')==='invalid-later'?'https://allowed.fbcdn.net/media':form.get('__crn')==='three'?'https://third.fbcdn.net/media':'https://invalid.example/2.jpg'}}}},...(form.get('__crn')==='duplicate-a'?[{node:{__typename:'TimelineAppCollectionItem',node:{__typename:'Photo',id:'3',viewer_image:{uri:'https://invalid.example/3.jpg'}}}}]:[])],page_info:form.get('__crn')==='oversize'?{end_cursor:'x'.repeat(4097),has_next_page:true}:{end_cursor:'cursor2',has_next_page:false}}}}}):mode==='malformed'?'not json':JSON.stringify(p?{data:{story_create:{story:{url:mode==='external'?'https://example.test/fixture/posts/'+p.id:'https://www.facebook.com/fixture/posts/'+p.id,default_actor:{id:mode==='wrongActor'?'999':'12345'}}}}}:{errors:[{message:'fixture publish failed'}]})).toString('base64')}await call('Fetch.fulfillRequest',{requestId:m.params.requestId,responseCode:200,responseHeaders:[{name:'Content-Type',value:'text/html; charset=utf-8'}],body},m.sessionId)}
- }catch(e){if(!(e instanceof TargetClosed)&&!e.message.includes('Session with given id not found'))report.push({harnessError:e.message,event:m.method,sessionId:m.sessionId||m.params.sessionId})}};
+ }catch(e){if(!(e instanceof TargetClosed)&&!e.message.includes('Session with given id not found')&&!e.message.includes('Invalid InterceptionId'))report.push({harnessError:e.message,event:m.method,sessionId:m.sessionId||m.params.sessionId})}};
  report.push({runtime:{node:process.version,platform:process.platform,browser:await call('Browser.getVersion')}});
  await call('Target.setAutoAttach',{autoAttach:true,waitForDebuggerOnStart:true,flatten:true});
  await call('Storage.setCookies',{cookies:[{name:'c_user',value:'12345',domain:'.facebook.com',path:'/'},{name:'story_fixture',value:'primary',domain:'.facebook.com',path:'/',secure:true},{name:'story_fixture',value:'partitioned',domain:'.facebook.com',path:'/',secure:true,sameSite:'None',partitionKey:{topLevelSite:'https://example.test',hasCrossSiteAncestor:true}}]});
@@ -124,7 +124,7 @@ try{
   assert.match(await fb('search','Recycled','--type','people','--match','Rare University','-n','1'),/^Recycled 16\tu[a-z0-9]+\t/);
   assert.match(await fb('search','Reveal','--type','people','--match','Paris','-n','1'),/^Earlier\t/);
   assert.match(await fb('search','Delayed','--type','people','--match','Paris','-n','1'),/^Delayed\t/);
-  assert.match(await fb('search','Alias','--type','people','--match','Paris','-n','1'),/^Marc\t/);
+  assert.match(await fb('search','Alias','--type','people','--match','Paris','-n','1'),/^Marc\tu[a-z0-9]+\t.*\tprofile$/);
   assert.match(await fb('search','Alias','--type','people','--match','Academy','-n','1'),/^Marc\t/);
   const emptyStart=performance.now();assert.equal(await fb('search','Empty','--type','people','-n','1'),'');assert(performance.now()-emptyStart<10000);
   assert.equal(await fb('search','Ambiguous','--type','people','--match','Alice','-n','1'),'');
@@ -443,7 +443,13 @@ try{
   }finally{await evaluate(`localStorage.posts=JSON.stringify(${JSON.stringify(saved)});for(const k of ['collapsedBody','expandDelay','expandLabel'])localStorage.removeItem(k);JSON.stringify(true)`)}
  });
  await check('PIN modal send is single and confirmed in three locales',async()=>{for(const locale of ['en','vi','fr']){
-  await evaluate(`localStorage.restored="false";localStorage.locale=JSON.stringify("${locale}");JSON.stringify(true)`);
+  await evaluate(`localStorage.restored="false";localStorage.removeItem("unlocked");localStorage.locale=JSON.stringify("${locale}");JSON.stringify(true)`);
+  // While history is locked a send must report blocked, never clear the
+  // restore prompt by declining it on the user's behalf.
+  await assert.rejects(()=>fb('send','42','fixture send '+locale),/history prompt blocked/);
+  assert.equal(await evaluate(`JSON.stringify(JSON.parse(localStorage.messages||"[]").filter(x=>x==="fixture send ${locale}").length)`),0);
+  await fb('unlock','1234');
+  await evaluate('localStorage.restored="true";JSON.stringify(true)');
   assert.match(await fb('send','42','fixture send '+locale),/^sent/);
   assert.match(await fb('read','42','-n','3'),new RegExp('me: fixture send '+locale));
   assert.equal(await evaluate(`JSON.stringify(JSON.parse(localStorage.messages).filter(x=>x==="fixture send ${locale}").length)`),1);
@@ -456,7 +462,9 @@ try{
   try{await fb('send','42',text)}catch{sent=false}
   const after=await evaluate('JSON.stringify(JSON.parse(localStorage.messages||"[]"))'),added=after.slice(before.length);
   assert.deepEqual(added,sent?[text]:[],'only an exact full message or no message is allowed');
-  await evaluate('localStorage.removeItem("pinAutofocus");localStorage.truncateDraft="true";JSON.stringify(true)');
+  await evaluate('localStorage.removeItem("pinAutofocus");JSON.stringify(true)');
+  await fb('unlock','1234');
+  await evaluate('localStorage.restored="true";localStorage.truncateDraft="true";JSON.stringify(true)');
   const count=after.length;await assert.rejects(()=>fb('send','42','draft must remain complete'),/draft changed.*no text was sent/);
   assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.messages||"[]").length)'),count);
   await evaluate('localStorage.removeItem("truncateDraft");JSON.stringify(true)');
@@ -514,6 +522,7 @@ try{
   }
  });
  await check('explicit unlock opens persisted Enter PIN banner',async()=>{
+  await evaluate('localStorage.pinStyle=JSON.stringify("banner");localStorage.restored="true";localStorage.removeItem("unlocked");JSON.stringify(true)');
   assert.match(await fb('unlock','1234'),/^unlocked/);
   assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.unlocked))'),true);
  });
@@ -528,8 +537,66 @@ try{
   assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.unlocked))'),true);
   await evaluate('localStorage.pinStyle=JSON.stringify("segmented");localStorage.restored="true";JSON.stringify(true)');
  });
+ await check('unlock presses the Continue button inside an inert role=presentation wrapper',async()=>{
+  await evaluate('localStorage.restored="false";localStorage.wrapContinue="true";localStorage.pinStyle=JSON.stringify("staged");localStorage.removeItem("unlocked");JSON.stringify(true)');
+  try{
+   assert.match(await fb('unlock','1234'),/^unlocked/);
+   assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.unlocked))'),true);
+  }finally{await evaluate('localStorage.removeItem("wrapContinue");localStorage.pinStyle=JSON.stringify("segmented");localStorage.restored="true";JSON.stringify(true)')}
+ });
+ await check('unlock waits for verification when the submitted PIN field is hidden',async()=>{
+  await evaluate('localStorage.restored="false";localStorage.sealHide="true";localStorage.pinStyle=JSON.stringify("real");localStorage.removeItem("unlocked");JSON.stringify(true)');
+  try{
+   assert.match(await fb('unlock','123456'),/^unlocked/);
+   // the fixture finishes verifying 4s after the PIN: reporting earlier is a false success
+   assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.unlocked))'),true);
+  }finally{await evaluate('localStorage.removeItem("sealHide");localStorage.pinStyle=JSON.stringify("segmented");localStorage.restored="true";JSON.stringify(true)')}
+ });
+ await check('unlock without a restore prompt explains why and leaks no chat content',async()=>{
+  await evaluate('localStorage.restored="true";localStorage.restoreRow="true";localStorage.pinStyle=JSON.stringify("none");localStorage.removeItem("unlocked");JSON.stringify(true)');
+  try{
+   let message='';try{await fb('unlock','1234')}catch(e){message=String(e.message||e)}
+   assert.match(message,/PIN restore prompt not found.*Don't restore messages/);
+   assert.ok(!/Rita|send me your PIN/.test(message),'chat list content must not appear in the error');
+  }finally{await evaluate('localStorage.removeItem("restoreRow");localStorage.pinStyle=JSON.stringify("segmented");JSON.stringify(true)')}
+ });
+ await check('unlock opens restore from a plain link entry',async()=>{
+  await evaluate('localStorage.restored="true";localStorage.pinStyle=JSON.stringify("link");localStorage.removeItem("unlocked");JSON.stringify(true)');
+  assert.match(await fb('unlock','1234'),/^unlocked/);
+  assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.unlocked))'),true);
+ });
+ await check('unlock opens restore from a long banner button',async()=>{
+  await evaluate('localStorage.restored="true";localStorage.pinStyle=JSON.stringify("banner");localStorage.removeItem("unlocked");JSON.stringify(true)');
+  assert.match(await fb('unlock','1234'),/^unlocked/);
+  assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.unlocked))'),true);
+  await evaluate('localStorage.pinStyle=JSON.stringify("segmented");localStorage.restored="true";JSON.stringify(true)');
+ });
+ await check('unlock finds the single PIN field in the real restore prompt',async()=>{
+  await evaluate('localStorage.restored="false";localStorage.pinStyle=JSON.stringify("real");localStorage.removeItem("unlocked");JSON.stringify(true)');
+  assert.match(await fb('unlock','123456'),/^unlocked/);
+  assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.unlocked))'),true);
+  await evaluate('localStorage.pinStyle=JSON.stringify("segmented");localStorage.restored="true";JSON.stringify(true)');
+ });
+ await check('a wrong PIN in the real restore prompt reports what Facebook said',async()=>{
+  await evaluate('localStorage.restored="false";localStorage.pinStyle=JSON.stringify("real");localStorage.removeItem("unlocked");JSON.stringify(true)');
+  await assert.rejects(()=>fb('unlock','654321'),/PIN was not accepted/);
+  await evaluate('localStorage.pinStyle=JSON.stringify("segmented");localStorage.restored="true";JSON.stringify(true)');
+ });
+ await check('a blocked command never declines the restore',async()=>{
+  await evaluate('localStorage.restored="false";localStorage.removeItem("pinStyle");localStorage.removeItem("unlocked");JSON.stringify(true)');
+  // The composer path meets the prompt head-on: it must report blocked,
+  // never clear the prompt by declining the restore on the user's behalf.
+  await assert.rejects(()=>fb('send','42','must not send while locked'),/history prompt blocked/);
+  // Declining would have flipped restored to true and dropped the prompt:
+  // the fixture only sets restored on the "Don't restore messages" path.
+  assert.equal(await evaluate('localStorage.getItem("restored")==="false"'),true);
+  assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.messages||"[]").filter(x=>x==="must not send while locked").length)'),0);
+  assert.match(await fb('unlock','1234'),/^unlocked/);
+  assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.unlocked))'),true);
+  await evaluate('localStorage.pinStyle=JSON.stringify("segmented");localStorage.restored="true";JSON.stringify(true)');
+ });
  await check('a wrong segmented PIN reports what Facebook said',async()=>{
-  await evaluate('localStorage.restored="false";localStorage.removeItem("unlocked");JSON.stringify(true)');
+  await evaluate('localStorage.pinStyle=JSON.stringify("segmented");localStorage.restored="false";localStorage.removeItem("unlocked");JSON.stringify(true)');
   await assert.rejects(()=>fb('unlock','9999'),/PIN was not accepted/);
   await evaluate('localStorage.removeItem("pinStyle");localStorage.restored="true";JSON.stringify(true)');
  });
@@ -687,6 +754,17 @@ try{
   const text='multiline first\nsecond line';const receipt=await fb('post',text,'--to','me');assert.match(receipt,/^posted\tp[a-z0-9]+\t/);assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.posts)[0].text)'),text);await fb('delete',receipt.split('\t')[1]);
   assert.match(await fb('send','42',text),/^sent/);assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.messages).filter(x=>x==="multiline first\\nsecond line").length)'),1);
  });
+ await check('message react and reply work through the message toolbar',async()=>{
+  await evaluate('localStorage.restored="true";JSON.stringify(true)');
+  assert.match(await fb('send','42','react target message'),/^sent/);
+  assert.match(await fb('msgreact','42','love','--match','react target message'),/^reacted/);
+  assert.match(await fb('read','42','-n','6'),/❤️/);
+  await assert.rejects(()=>fb('reply','42','sent without selector'),/usage: reply/);
+  assert.doesNotMatch(await fb('read','42','-n','6'),/sent without selector/);
+  assert.match(await fb('reply','42','fixture reply text','--match','Earlier message'),/^replied/);
+  assert.match(await fb('read','42','-n','6'),/fixture reply text/);
+  assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.lastReplyTo))'),'Earlier message');
+ });
  await check('snapshot Unicode boundaries remain valid and bounded',async()=>{
   await fb('page','unicode','open','https://www.facebook.com/fixture');
   await fb('page','unicode','eval',`document.body.replaceChildren();const t=document.createElement('div');t.textContent='x'.repeat(1799)+'😀';const b=document.createElement('button');b.setAttribute('aria-label','x'.repeat(159)+'😀');const input=document.createElement('input');input.value='x'.repeat(119)+'😀';document.body.append(t,b,input);true`);
@@ -809,10 +887,21 @@ try{
   assert.match(await fb('search','fixture','--type','events'),/Fixture Event/);
   assert.match(await fb('search','fixture','--type','places'),/Fixture Cafe/);
   assert.match(await fb('search','chair','--type','photos'),/Photo of a chair/);
-  assert.match(await fb('search','chair','--type','videos'),/Chair assembly video/);
+  const videos=(await fb('search','chair','--type','videos')).split('\n');
+  assert.deepEqual(videos.map(r=>r.split('\t')[0]),['Chair assembly video','Chair repair video']);
+  assert.match(videos[0],/\thttps:\/\/www\.facebook\.com\/watch\/\?v=654\t.*\tvideo$/);assert.match(videos[1],/\?v=655\t.*\tvideo$/);
   const market=await fb('search','chair','--type','marketplace');
   assert.match(market,/Wooden chair/);assert.match(market,/\$40.*Vancouver/);
   assert.match(market,/https:\/\/www\.facebook\.com\/marketplace\/item\/555\t.*\tlisting/);
+  assert.equal((await fb('search','chair','--type','marketplace','--match','Vancouver','-n','2')).split('\n').length,1);
+  assert.match(await fb('search','chair','--type','marketplace','--match','Burnaby','-n','1'),/^Desk lamp\t/);
+  assert.equal(await fb('search','chair','--type','marketplace','--match','Toronto'),'');
+  assert.equal(await fb('search','chair','--type','marketplace','--match','Secret University'),'');
+  assert.match(await fb('search','chair','--type','marketplace','--match','nice'),/^\$100 gift card\thttps:\/\/www\.facebook\.com\/marketplace\/item\/561\t\$80 · Nice\tlisting$/);
+  assert.match(await fb('search','chair','--type','marketplace','--match','lyon'),/^Chaise basse\thttps:\/\/www\.facebook\.com\/marketplace\/item\/560\tGratuit · Lyon\tlisting$/);
+  assert.match(await fb('search','chair','--type','marketplace','--match','ghe go'),/^Ghế gỗ\thttps:\/\/www\.facebook\.com\/marketplace\/item\/559\t40\.000 ₫ · Hà Nội\tlisting$/);
+  assert.match(await fb('search','chair','--type','marketplace','--match','Paris'),/^Chaise\thttps:\/\/www\.facebook\.com\/marketplace\/item\/557\t40 € · Paris\tlisting$/);
+  assert.match(await fb('search','Permalink','--type','top'),/^Permalink Author\tu[a-z0-9]+\t.*\tpost$/);
  });
  await check('group join, idempotence, questions and leave',async()=>{
   assert.equal(await fb('group-join','111'),'joined group');
@@ -825,12 +914,31 @@ try{
   assert.match(qs,/questions\t2/);assert.match(qs,/q\tWhy do you want to join\?/);
   assert.match(await fb('group-apply','333','I collect chairs','Yes I agree'),/answers submitted/);
   assert.match(await fb('group-join','333'),/already pending/);
+  const answers=gid=>evaluate('localStorage.getItem("ans-'+gid+'")');
+  assert.equal(await fb('group-join','444'),'questions\t2\nq\tWhy do you want to join?\nq\tDo you agree to the group rules?');
+  assert.match(await fb('group-apply','444','I collect chairs','Yes'),/answers submitted/);
+  assert.deepEqual(await answers(444),{text:'I collect chairs',radio:'Yes'});
+  assert.match(await fb('group-join','555'),/questions\t1/);
+  await assert.rejects(()=>fb('group-apply','555','Maybe'),/no option matches the answer 'Maybe'/);
+  await assert.rejects(()=>fb('group-apply','555',''),/no option matches the answer ''/);
+  assert.equal(await evaluate('localStorage.getItem("ans-555")'),null);
+  assert.match(await fb('group-apply','555','No'),/answers submitted/);
+  assert.deepEqual(await answers(555),{radio:'No'});
  });
  await check('post takes video and photo files',async()=>{
   const png=path.join(temp,'chair.png');await writeFile(png,Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==','base64'));
   const mp4=path.join(temp,'clip.mp4');await writeFile(mp4,Buffer.from('AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDE=','base64'));
   assert.match(await fb('post','clip post','--video',mp4,'--dry'),/dry: composer filled/);
   assert.match(await fb('post','photo post','--img',png,'--dry'),/dry: composer filled/);
+ });
+ await check('verified badge reads as Verified, not the tooltip sentence',async()=>{
+  const saved=await evaluate('JSON.stringify(localStorage.posts||null)');
+  await evaluate('localStorage.posts=JSON.stringify([{id:"100",text:"Badge post",aud:"me",badge:true}]);JSON.stringify(true)');
+  try{
+   const feed=await fb('feed');
+   assert.ok(feed.includes('Verified'),'badge shortened to Verified');
+   assert.ok(!feed.includes('Accounts with a verified badge'),'tooltip sentence gone');
+  }finally{await evaluate(saved==='null'?'localStorage.removeItem("posts");JSON.stringify(true)':'localStorage.posts='+saved+';JSON.stringify(true)');}
  });
  await check('timeout drops uncertain page and close frees its name',async()=>{
   const original=env;env={...env,FB_STATE:path.join(temp,'timeout-state'),FB_TIMEOUT:'1'};

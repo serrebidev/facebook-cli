@@ -247,68 +247,127 @@
   for(let p=cand;p&&p!==document.body;p=p.parentElement)if(HINT.test(p.innerText||''))return p;
   return null;
  };
- const pinRoot=()=>{const d=pinDialog();if(d)return d;const r=pagePinRoot();if(r)return r;const rd=restoreDialog();return rd&&pinInputs(rd).length?rd:null;};
+ // The surface Brandon's account actually shows (verified live on his
+ // account, 2026-10-31): a prompt with NO role=dialog wrapper and NO
+ // submit button — the heading "Enter your PIN to restore your chats",
+ // ONE text field whose label is a separate element (aria-labelledby or
+ // a <label>, never aria-label/placeholder), and entry auto-submits when
+ // the PIN is complete. Role- and attribute-based finders walk straight
+ // past it; find it by its heading and take the field in the same
+ // container. (The often-cited facebook.com/secure-storage URL is NOT a
+ // door: on his account it redirects to an unrelated business Page.)
+ const headingRoot=()=>{
+  const h=[...document.querySelectorAll('h1,h2,h3,[role=heading]')].find(e=>F.visible(e)&&/enter your pin to restore/i.test(F.clean(e.innerText||'')));
+  if(!h)return null;
+  for(let p=h.parentElement;p&&p!==document.body;p=p.parentElement){
+   // Any field under the heading counts, visible or not: a submitted PIN may be hidden while the prompt stays up.
+   // A real <input> only: the message composer is a role=textbox and shares ancestors with the heading.
+   if(pinInputs(p).some(i=>i.tagName==='INPUT'))return p;
+  }
+  return null;
+ };
+ const pinRoot=()=>{const d=pinDialog();if(d)return d;const hr=headingRoot();if(hr)return hr;const r=pagePinRoot();if(r)return r;const rd=restoreDialog();return rd&&pinInputs(rd).length?rd:null;};
  const label=e=>F.clean(e.innerText||e.getAttribute('aria-label')||'');
+ // Buttons and links whose whole label matches. Never a wrapper element: a
+ // role-less or role=presentation ancestor shares its child's label but
+ // swallows the press.
+ const pressable=(root,re)=>[...root.querySelectorAll('button,[role=button],a[href],[role=link]')].find(e=>F.visible(e)&&F.enabled(e)&&re.test(label(e)));
  const ADVANCE=/^(continue|next|restore|restore messages|restore chat history|restore history|get started|start|submit|done|tiếp tục|tiếp theo|khôi phục|continuer|suivant|restaurer|commencer)$/i;
  const OPEN=/enter (your |a )?pin|use (your )?pin|restore( messages| chat history| history)?|restore now|sync now|nhập mã pin|saisir (?:le |votre )?code pin|saisissez (?:le |votre )?code pin/i;
  // What Facebook actually put on screen, so a not-found error names the real
  // stage instead of sending the user to restore in the wrong place. Dialog
  // text and button labels only — never chat content.
+ // Only restore-relevant text and controls belong in this diagnostic: a
+ // chat list's rows also mention end-to-end encryption, and reading a
+ // person's name and message preview back in an error is both noise and
+ // their private content. Rows are excluded by their list container.
+ const RESTORE_ONLY=/restore|secure storage|chat history|\bPIN\b|khôi phục|restaur|sécuris/i;
+ const CHAT_LIST='[role=list],[role=grid],[role=row],[role=log],[role=complementary]';
+ // Excludes both a chat list's descendants and the wrappers that merely contain one: a wrapper's text is the rows' text.
+ const inChatList=e=>!!e.closest(CHAT_LIST);
+ // A chat row's name or preview can say anything, "restore" included: never press one.
+ const inChatRow=e=>!!e.closest('[role=grid],[role=row],[role=log]');
  const seenRestore=()=>{
   const parts=[];
-  for(const d of document.querySelectorAll('[role=dialog]')){const t=F.clean(d.innerText).slice(0,120);if(t)parts.push('dialog: '+t);}
-  const btns=[...document.querySelectorAll('button,[role=button]')].filter(b=>F.visible(b)).map(label).filter(Boolean).slice(0,12);
-  if(btns.length)parts.push('buttons: '+btns.join(' | '));
-  return parts.length?(' On screen: '+parts.join(' ;; ').slice(0,600)):'';
+  for(const d of document.querySelectorAll('[role=dialog]')){const t=F.clean(d.innerText).slice(0,160);if(t&&RESTORE_ONLY.test(t))parts.push('dialog: '+t);}
+  const btns=[...document.querySelectorAll('button,[role=button],a[href],[role=link]')].filter(b=>F.visible(b)&&!inChatList(b)).map(label).filter(t=>t&&t.length<=160&&RESTORE_ONLY.test(t)).slice(0,10);
+  if(btns.length)parts.push('restore controls: '+btns.join(' | '));
+  const hints=new Set();
+  for(const e of document.querySelectorAll('div,span,a,p')){if(hints.size>=3)break;if(!F.visible(e)||e.children.length>3||inChatList(e)||e.querySelector(CHAT_LIST))continue;const t=F.clean(e.innerText||'');if(t&&t.length<=160&&RESTORE_ONLY.test(t))hints.add(e.tagName.toLowerCase()+': '+t.slice(0,120));}
+  if(hints.size)parts.push('restore text: '+[...hints].join(' | '));
+  return parts.length?(' On screen: '+parts.join(' ;; ').slice(0,500)):'';
  };
- F.pinFocus=async()=>{
+ F.pinFocus=async(budget)=>{
   const pressed=new WeakSet();
-  const end=Date.now()+45000;
+  let lastHint=0;
+  const end=Date.now()+(budget||45000);
   while(Date.now()<end){
    const root=pinRoot();
-   if(root){const inp=pinInputs(root).filter(i=>F.visible(i))[0]||pinInputs(root)[0];if(inp){inp.focus();return true;}}
+   if(root){const inp=pinInputs(root).filter(i=>F.visible(i))[0]||pinInputs(root)[0];if(inp){try{inp.click();}catch(e){}inp.focus();return true;}}
    // A restore stage with no PIN field yet: choose the PIN method when one
    // is offered (never the forgot/reset path), then press what advances it.
    const d=restoreDialog();
    if(d){
     const opt=[...d.querySelectorAll('[role=radio],[role=option],[role=listitem],label,button,[role=button]')].find(e=>F.visible(e)&&F.enabled(e)&&/pin/i.test(label(e))&&!/forgot|reset/i.test(label(e)));
     if(opt&&!pressed.has(opt)){pressed.add(opt);try{F.press(opt);}catch(e){}await F.sleep(300);continue;}
-    const btn=[...d.querySelectorAll('button,[role=button]')].find(b=>F.visible(b)&&F.enabled(b)&&ADVANCE.test(label(b)));
+    const btn=pressable(d,ADVANCE);
     if(btn&&!pressed.has(btn)){pressed.add(btn);try{F.press(btn);}catch(e){}await F.sleep(300);continue;}
    }
-   // No dialog: the restore offer may be a banner button in the chat pane.
-   const open=[...document.querySelectorAll('button,[role=button]')].find(b=>F.visible(b)&&F.enabled(b)&&label(b).length<60&&OPEN.test(label(b)));
-   if(open&&!pressed.has(open)){pressed.add(open);try{F.press(open);}catch(e){}await F.sleep(300);continue;}
+   // No dialog: the restore offer may be a banner or link in the chat pane.
+   // It is not always a <button>: Facebook also renders it as a link, and a
+   // banner button's label is the whole sentence, well past 60 chars.
+   const open=[...document.querySelectorAll('button,[role=button],a[href],[role=link],[role=menuitem],[role=tab]')].find(b=>F.visible(b)&&F.enabled(b)&&!pressed.has(b)&&!inChatRow(b)&&label(b).length<=140&&OPEN.test(label(b)));
+   if(open){pressed.add(open);try{F.press(open);}catch(e){}await F.sleep(300);continue;}
+   // Last resort, throttled: a bare text element that reads like a restore
+   // entry and is clickable (pointer cursor or inside a clickable ancestor).
+   if(Date.now()-lastHint>1500){
+    lastHint=Date.now();
+    const hint=[...document.querySelectorAll('a,div,span,[role=link]')].filter(e=>F.visible(e)&&e.children.length<4&&!inChatRow(e)).find(e=>{const t=label(e);return t.length>0&&t.length<=140&&/restore (your )?(chat history|messages)|restore from secure storage|enter (your )?pin/i.test(t)&&(e.closest('a,button,[role=button],[role=link]')||getComputedStyle(e).cursor==='pointer')&&!pressed.has(e.closest('a,button,[role=button],[role=link]')||e);});
+    if(hint){const c=hint.closest('a,button,[role=button],[role=link]')||hint;pressed.add(c);try{F.press(c);}catch(e){}await F.sleep(300);continue;}
+   }
    await F.sleep(200);
   }
-  return 'PIN restore dialog not found; open Messenger history restoration with `fb page`.'+seenRestore();
+  // No prompt was found in either walk. Say what that means, because on a
+  // profile that once answered "Don't restore messages" Facebook keeps that
+  // answer and never offers the prompt again here — retrying unlock there can
+  // never succeed.
+  return 'PIN restore prompt not found. If "Don\'t restore messages" was chosen on this browser profile before, Facebook remembers it and will not offer the prompt again here: chats this profile already restored still read, but history missing from it cannot be restored from this profile. Otherwise the restore UI changed — inspect it with `fb page`.'+seenRestore();
  };
- F.pinDone=async()=>{
+ F.pinDone=async(budget)=>{
   // Typing alone does not submit every surface: some wait for a Continue /
   // Restore button once the PIN is complete, and a wrong PIN is reported in
-  // the dialog instead of closing it. Watch for all three outcomes.
+  // the dialog instead of closing it. And on the real surface the PIN
+  // auto-submits into a "Verifying your PIN" state that can run for
+  // minutes: a sealed field with the surface still up is Facebook still
+  // restoring, NOT success and NOT failure. The restore runs in this page,
+  // so the caller keeps the tab alive and unfrozen until the surface has
+  // actually cleared (sustained, not a remount blip) or the budget ends;
+  // a budget that ends on a sealed surface reports 'VERIFYING' so the
+  // caller leaves the tab running instead of freezing the restore dead.
   const SUBMIT=/^(Continue|Restore|Restore messages|Next|Submit|Done|Tiếp tục|Khôi phục|Tiếp theo|Continuer|Restaurer|Suivant)$/i;
   const BAD=/incorrect|wrong PIN|invalid PIN|PIN (was )?not accepted|không đúng|sai mã|erroné/i;
   const clicked=new WeakSet();
-  const end=Date.now()+20000;
-  let sealed=0;
+  const end=Date.now()+(budget||240000);
+  let gone=0;
   while(Date.now()<end){
-   const d=pinDialog()||pagePinRoot();
-   if(!d)return true;
+   const d=pinRoot();
+   if(!d){
+    if(!gone)gone=Date.now();else if(Date.now()-gone>1000)return true;
+    await F.sleep(250);continue;
+   }
+   gone=0;
    const err=[...d.querySelectorAll('[role=alert],div,span')].map(e=>F.clean(e.innerText)).find(t=>t&&t.length<200&&BAD.test(t));
    if(err)return 'Facebook says the PIN was not accepted: '+err;
-   // The field sealing shut (disabled/hidden) with no rejection showing is
-   // Facebook taking the PIN away to restore: that is a submission, not a
-   // dialog that is still waiting for one.
    const inputs=pinInputs(d);
-   if(inputs.length&&!inputs.some(i=>F.visible(i)&&F.enabled(i))){
-    if(!sealed)sealed=Date.now();else if(Date.now()-sealed>3000)return true;
-   }else sealed=0;
    const filled=inputs.reduce((n,i)=>{const v=(i.value==null?i.innerText:i.value)||'';return n+v.replace(/\D/g,'').length},0);
-   const btn=[...d.querySelectorAll('button,[role=button]')].find(b=>F.visible(b)&&F.enabled(b)&&SUBMIT.test(F.clean(b.innerText||b.getAttribute('aria-label'))));
+   const btn=pressable(d,SUBMIT);
    if(btn&&filled>=4&&!clicked.has(btn)){clicked.add(btn);F.press(btn);}
-   await F.sleep(150);
+   await F.sleep(250);
   }
+  const d=pinRoot();
+  if(!d)return true;
+  const inputs=pinInputs(d);
+  if(inputs.length&&!inputs.some(i=>F.visible(i)&&F.enabled(i)))return 'VERIFYING';
   return 'PIN rejected or dialog still open';
  };
 })();
@@ -400,5 +459,116 @@
   const gone=await waitFor(()=>!u.target.isConnected||!dialogs().some(d=>d.contains(u.btn)),10000,150);
   await sleep(600);
   return gone?true:'not confirmed by messenger';
+ };
+ // Find one message in the open thread: the newest whose text contains
+ // `match` (any sender), or the newest message at all. Same discipline as
+ // unsendOpen: start from the newest rows, never pick among half-rendered
+ // ones. A row counts as rendered only once its message label parses (a
+ // toolbar's own aria-label appears earlier), and a newer row that never
+ // does is an error: falling through would act on an older message.
+ // Returns {a,m} or {err}.
+ F.msgTarget=async match=>{
+  const log=document.querySelector('[role=log]');
+  if(!log)return{err:'no thread'};
+  const sc=F.scroller(log);
+  if(sc)sc.scrollTop=sc.scrollHeight;else window.scrollTo(0,document.body.scrollHeight);
+  await sleep(250);
+  const readable=m=>!!(m.t||m.text);
+  const ready=await waitFor(()=>[...log.querySelectorAll('[role=article]')].slice(-4).every(a=>readable(F.parseMessage(a,log))),5000,100);
+  if(!ready)return{err:'messages are still loading; try again'};
+  if(!await F.settleBottom(log,3,300))return{err:'could not reach the newest messages; nothing was changed'};
+  for(const a of [...log.querySelectorAll('[role=article]')].reverse()){
+   const m=F.parseMessage(a,log);
+   if(!readable(m))return{err:'a newer message could not be read; nothing was changed'};
+   if(match&&!(m.text||'').toLowerCase().includes(match.toLowerCase()))continue;
+   if(!m.text&&!m.att){
+    // a readable row with no text or attachment (voice message, sticker) can never match; with no
+    // selector it IS the newest message, which we cannot act on: never fall through to an older one
+    if(match)continue;
+    return{err:'the newest message has no readable text; nothing was changed'};
+   }
+   return{a,m};
+  }
+  return{err:match?'no message contains that text':'no message found in this chat'};
+ };
+ // Focus a message and find one of its hover toolbar's buttons by label.
+ F.msgToolbarBtn=async(a,re)=>{
+  a.scrollIntoView({block:'center'});
+  const focusable=a.querySelector('[tabindex="0"]');
+  if(!focusable)return null;
+  focusable.focus();
+  return await waitFor(()=>{
+   const b=[...a.querySelectorAll('[role=toolbar] [role=button],[role=toolbar] [aria-label]')].filter(e=>e.getBoundingClientRect().width>0);
+   return b.find(e=>re.test((e.getAttribute('aria-label')||'')+' '+(e.title||'')))||null;
+  },4000,100);
+ };
+ const REACT_EMOJI={like:'👍',love:'❤️',care:'🥰',haha:'😆',wow:'😮',sad:'😢',angry:'😡'};
+ // React to one message in two steps, so the caller can still cancel
+ // between them: Open finds the message and opens its toolbar's emoji
+ // picker, Confirm clicks our emoji and verifies it landed.
+ F.msgReactOpen=async(match,name)=>{
+  const emoji=REACT_EMOJI[name];
+  if(!emoji)return 'unknown reaction: '+name;
+  const t=await F.msgTarget(match);
+  if(t.err)return t.err;
+  const btn=await F.msgToolbarBtn(t.a,/react|emoji|cảm xúc|réagir/i);
+  if(!btn)return 'no react button on that message';
+  F.press(btn);
+  const pick=await waitFor(()=>{
+   const pops=[...document.querySelectorAll('[role=dialog],[role=menu]')].filter(e=>e.getBoundingClientRect().width>0&&!e.querySelector('[role=log]'));
+   for(const p of pops.reverse()){
+    const bs=[...p.querySelectorAll('[role=button],button')];
+    // exactly our emoji (a skin-tone variant is another one), or a label on a glyph-less button
+    const b=bs.find(e=>(e.textContent||'').trim()===emoji||!(e.textContent||'').trim()&&(e.getAttribute('aria-label')||'').toLowerCase()===name);
+    if(b)return b;
+   }
+   return null;
+  },4000,100);
+  if(!pick)return 'the reaction picker did not open';
+  window.__fbReact={t,pick,emoji};
+  return true;
+ };
+ F.msgReactConfirm=async()=>{
+  const r=window.__fbReact;if(!r)return 'no reaction picker is open';
+  window.__fbReact=null;
+  const {t,pick,emoji}=r;
+  const log=document.querySelector('[role=log]');
+  // the row may be re-rendered by the reaction: re-find OUR message by id (or the row itself
+  // when ids are absent), never a newer one with the same sender and text
+  const rows=()=>[...log.querySelectorAll('[role=article]')];
+  const ours=()=>t.m.id?rows().find(x=>F.parseMessage(x,log).id===t.m.id):t.a.isConnected?t.a:undefined;
+  // reactions are aggregates without authors ("❤️2", skin-tone variants are separate graphemes): our
+  // emoji's count must grow from its value right before the click, or someone else's identical
+  // emoji (or an unrelated change) would confirm a reaction that never landed
+  // (Messenger exposes no per-user ownership here, so a click that toggles an existing own reaction off is reported as not landed)
+  const count=re=>{
+   const g=[...new Intl.Segmenter().segment(re)].map(x=>x.segment);let total=0;
+   for(let i=0;i<g.length;i++){if(g[i]!==emoji)continue;let n='';while(/^\d$/.test(g[i+1]||''))n+=g[++i];total+=n?+n:1;}
+   return total;
+  };
+  const now=()=>{const m=ours();return m?count(F.parseMessage(m,log).re):-1};
+  // no baseline without the message on screen: a remount with old reactions must not look like a new one
+  const before=now();
+  if(before<0)return 'the message is no longer on screen; nothing was changed';
+  F.press(pick);
+  const ok=await waitFor(()=>now()>before,3000,150);
+  if(!ok)return 'the reaction did not land on the message';
+  return{text:'reacted '+emoji+' to '+(t.m.sender||'a message')+': '+(t.m.text||'['+(t.m.att||'attachment')+']')};
+ };
+ // Arm a reply: the message's toolbar Reply button makes Messenger quote
+ // it above the composer; the caller then sends the reply text normally.
+ F.msgReplyOpen=async match=>{
+  const t=await F.msgTarget(match);
+  if(t.err)return t.err;
+  const btn=await F.msgToolbarBtn(t.a,/^reply|reply|trả lời|répondre/i);
+  if(!btn)return 'no reply button on that message';
+  const log=document.querySelector('[role=log]');
+  const quotes=()=>[...document.querySelectorAll('div,span')].filter(e=>!log.contains(e)&&!e.contains(log)&&e.children.length<4&&/replying to|đang trả lời|vous répondez/i.test(e.textContent||'')&&e.getBoundingClientRect().width>0);
+  // only a quote that appears after our click counts: a sidebar preview or an earlier quote must not confirm it
+  const had=new Set(quotes());
+  F.press(btn);
+  const banner=await waitFor(()=>quotes().find(e=>!had.has(e))||null,4000,150);
+  if(!banner)return 'the reply quote did not appear above the message box';
+  return{text:'replying to '+(t.m.sender||'a message')+': '+(t.m.text||'['+(t.m.att||'attachment')+']')};
  };
 })();
