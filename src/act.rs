@@ -428,6 +428,17 @@ fn current_reaction(label: &str, picker: &[String]) -> Option<usize> {
         .map(|(i, _)| i)
 }
 
+/// A reaction has landed only when the button shows a SELECTED state naming
+/// it. The neutral button reads exactly the first picker label ("Like"),
+/// which suffix-matches index 0 — so a suffix match alone would confirm a
+/// Like that never landed and bypass the retry.
+fn reaction_landed(label: &str, picker: &[String], idx: usize) -> bool {
+    picker
+        .first()
+        .is_some_and(|first| !first.is_empty() && label != first)
+        && current_reaction(label, picker) == Some(idx)
+}
+
 /// Join a group. Idempotent: already joined / already requested is reported,
 /// not re-clicked. A group that asks membership questions gets its questions
 /// reported back; answering them is the user's call, nothing is submitted.
@@ -793,12 +804,18 @@ pub async fn react(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
                     pick["x"].as_f64().ok_or("reaction picker not found")?,
                     pick["y"].as_f64().ok_or("reaction picker not found")?,
                 );
+                // The verification wait and picker probing can take seconds;
+                // a client that disconnected meanwhile must not get a fresh
+                // click dispatched on its behalf.
+                if out.cancelled() {
+                    return Err("cancelled by client; reaction unchanged".into());
+                }
                 b.click(&t, px, py).await?;
                 let deadline = std::time::Instant::now() + Duration::from_millis(6000);
                 loop {
                     let now = b.eval(&t, "window.__fb.likeInfo()").await?;
                     let l = now["label"].as_str().unwrap_or("").to_lowercase();
-                    if current_reaction(&l, &labels) == Some(idx) {
+                    if reaction_landed(&l, &labels, idx) {
                         landed = true;
                         break;
                     }
@@ -865,5 +882,22 @@ mod tests {
         assert_eq!(current_reaction("Gỡ Thích", &picker), Some(0));
         assert_eq!(current_reaction("Gỡ Haha", &picker), Some(3));
         assert_eq!(current_reaction("Bày tỏ cảm xúc", &picker), None);
+    }
+
+    #[test]
+    fn reaction_landed_requires_a_selected_state() {
+        let picker: Vec<String> = ["like", "love", "haha"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        // Neutral button reads exactly "like": suffix-matches index 0 but
+        // nothing is selected, so a missed click must not confirm.
+        assert!(!reaction_landed("like", &picker, 0));
+        assert!(!reaction_landed("like", &picker, 1));
+        // Selected states name the reaction in its remove form.
+        assert!(reaction_landed("remove like", &picker, 0));
+        assert!(reaction_landed("remove love", &picker, 1));
+        assert!(!reaction_landed("remove love", &picker, 0));
+        assert!(!reaction_landed("remove haha", &picker, 1));
     }
 }
