@@ -55,6 +55,97 @@
   const current=await waitFor(()=>{const b=audienceButton();return b&&AUD[kind].test(first(b.innerText))},3000);
   return current?true:'audience change not confirmed; nothing was posted';
  };
+ const setVal=(el,v)=>{const proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;const set=Object.getOwnPropertyDescriptor(proto,'value').set;set.call(el,v);el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));};
+ // ---- group join / leave: the header button cycles Join group -> Requested
+ // (private, approval needed) or Joined; leaving goes through the Joined menu
+ const G_JOIN=/^(Join group|Join|Tham gia nhóm|Rejoindre le groupe|Rejoindre)$/i;
+ const G_JOINED=/^(Joined|Đã tham gia|Membre)$/i;
+ const G_PENDING=/^(Requested|Pending|Cancel request|Đã yêu cầu|Demande envoyée|Annuler la demande)$/i;
+ const G_LEAVE=/^(Leave group|Rời khỏi nhóm|Quitter le groupe)$/i;
+ // a membership question is a text field or a radio group; one answer per question, in displayed order
+ const Q_SEL='textarea,[role=textbox],input[type=text],[role=radiogroup]';
+ const qDialog=()=>dialogs().find(d=>d.querySelector(Q_SEL));
+ const questionControls=d=>[...d.querySelectorAll(Q_SEL)].filter(e=>F.visible(e)&&!e.parentElement?.closest('[role=radiogroup]'));
+ // a prompt is the nearest text block before the control that holds no control itself
+ const promptOf=(c,d)=>{for(let n=c;n&&n!==d;n=n.parentElement)for(let s=n.previousElementSibling;s;s=s.previousElementSibling){if(s.matches(Q_SEL)||s.querySelector(Q_SEL))return '';const t=clean(s.innerText||'');if(t)return t.split('\n')[0].slice(0,200)}return ''};
+ const groupButton=()=>{const m=main();if(!m)return null;const bs=[...m.querySelectorAll('[role=button]')].filter(b=>!b.closest('[role=feed],[role=article],[role=list],[role=dialog]')).map(b=>({b,t:clean(b.innerText||'').split('\n')[0].trim()}));const j=bs.find(x=>G_JOINED.test(x.t));if(j)return j.b;const p=bs.find(x=>G_PENDING.test(x.t));if(p)return p.b;const a=bs.find(x=>G_JOIN.test(x.t));return a?a.b:null;};
+ F.groupState=()=>{const b=groupButton();if(!b)return 'none';const t=clean(b.innerText||'').split('\n')[0].trim();if(G_JOINED.test(t))return 'joined';if(G_PENDING.test(t))return 'pending';if(G_JOIN.test(t))return 'can-join';return 'none';};
+ // the header mounts after DOMContentLoaded: wait for a membership control before concluding there is none
+ F.groupWait=async()=>(await waitFor(()=>{const s=F.groupState();return s!=='none'?s:null},15000,200))||'none';
+ F.groupJoin=async()=>{
+  const st=F.groupState();if(st!=='can-join')return st;
+  const b=groupButton();if(!b)return 'none';b.click();
+  const out=await waitFor(()=>{
+   if(qDialog())return 'questions';
+   const s=F.groupState();return s==='joined'||s==='pending'?s:null;
+  },10000,250);
+  if(out==='questions'){
+   // membership questions: report them and back out; answering is the user's
+   // call. One prompt per answerable control, in the order group-apply answers.
+   const d=qDialog();
+   const qs=questionControls(d).map((c,i)=>promptOf(c,d)||'question '+(i+1));
+   const cancel=[...d.querySelectorAll('[role=button]')].find(x=>/^(Cancel|Hủy|Annuler|Close|Đóng|Fermer)$/i.test(clean(x.innerText||'')));
+   if(cancel)cancel.click();
+   return 'questions:'+JSON.stringify(qs);
+  }
+  return out||'unconfirmed';
+ };
+ // leaving is two steps so the caller can still cancel once the confirm button is showing
+ let leaveConfirm=null;
+ F.groupLeaveOpen=async()=>{
+  leaveConfirm=null;
+  const st=F.groupState();if(st!=='joined')return st;
+  const b=groupButton();if(!b)return 'none';b.click();
+  const item=await waitFor(()=>[...document.querySelectorAll('[role=menuitem],[role=menu] [role=button]')].find(i=>G_LEAVE.test(clean(i.innerText||'').split('\n')[0].trim())),6000);
+  if(!item)return 'no-leave-item';
+  item.click();
+  leaveConfirm=await waitFor(()=>{for(const d of dialogs()){const c=[...d.querySelectorAll('[role=button]')].find(x=>G_LEAVE.test(clean(x.innerText||'').split('\n')[0].trim()));if(c)return c;}return null;},6000);
+  return leaveConfirm?'ready':'no-confirm';
+ };
+ F.groupLeaveConfirm=async()=>{
+  const c=leaveConfirm;leaveConfirm=null;
+  if(!c||!c.isConnected)return 'no-confirm';
+  c.click();
+  return (await waitFor(()=>F.groupState()==='can-join'?'left':null,10000,250))||'unconfirmed';
+ };
+ // answer a group's membership questions and submit: choice questions
+ // (radio groups) take the answer whose text matches an option; the rest
+ // are text fields filled in order. Nothing is invented — a missing answer
+ // leaves its field empty and Facebook's own validation complains.
+ // two steps so the caller can still cancel once the answers are filled in
+ let applySubmit=null;
+ F.groupApplyFill=async(answers)=>{
+  applySubmit=null;
+  let st=F.groupState();
+  if(st==='joined')return 'joined';if(st==='pending')return 'pending';
+  if(st==='can-join'){const b=groupButton();if(!b)return 'none';b.click();}
+  const d=await waitFor(qDialog,10000);
+  if(!d){
+   const s=await waitFor(()=>{const x=F.groupState();return x==='joined'||x==='pending'?x:null;},4000,250);
+   return s||'no-questions';
+  }
+  const controls=questionControls(d);
+  const label=o=>clean(o.innerText||o.getAttribute('aria-label')||'').toLowerCase();
+  for(const [i,c] of controls.entries()){
+   const want=answers[i];if(want==null)break;
+   if(c.getAttribute('role')==='radiogroup'){
+    const opts=[...c.querySelectorAll('[role=radio],[role=checkbox],label')],w=want.toLowerCase();
+    const opt=w?opts.find(o=>label(o)===w)||opts.find(o=>label(o).includes(w)):null;
+    if(!opt)return 'no-option:'+want;
+    opt.click();
+   }else if(c.tagName==='TEXTAREA'||c.tagName==='INPUT')setVal(c,want);
+   else{c.focus();document.execCommand('selectAll',false,null);document.execCommand('insertText',false,want);}
+  }
+  applySubmit=[...d.querySelectorAll('[role=button]')].find(x=>/^(Submit|Submit answers|Send|Gửi|Envoyer|Soumettre)$/i.test(clean(x.innerText||'')));
+  return applySubmit?'ready':'no-submit';
+ };
+ F.groupApplySubmit=async()=>{
+  const submit=applySubmit;applySubmit=null;
+  if(!submit||!submit.isConnected)return 'no-submit';
+  submit.click();
+  const done=await waitFor(()=>{if(qDialog())return null;const s=F.groupState();return s==='joined'||s==='pending'?s:'submitted';},10000,250);
+  return done||'unconfirmed';
+ };
  const FRIEND_ADD=/^(Add friend|Thêm bạn bè|Ajouter un ami|Ajouter)$/i;
  const FRIEND_SENT=/^(Friend request sent|Cancel request|Đã gửi lời mời kết bạn|Demande envoyée|Annuler la demande)$/i;
  const FRIEND_IS=/^(Friends|Bạn bè|Amis)$/i;

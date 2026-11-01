@@ -447,3 +447,32 @@ console.log('js removed-newest ok');
   ]);
   console.log('js members ok');
 })().catch(e => { console.error(e); process.exit(1); });
+
+// search result kinds: exact route segments and query keys decide, not substrings
+(() => {
+  const vm = require('vm');
+  const ctx = vm.createContext({ window: {}, document: {}, location: { href: 'https://www.facebook.com/' }, URL, setTimeout });
+  vm.runInContext(src, ctx);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../js/ops.js'), 'utf8'), ctx);
+  const { kindOf } = ctx.window.__fb;
+  for (const [href, kind] of [
+    ['/photoshop', null],
+    ['/watchmaker', null],
+    ['/photo/?fbid=99&set=a.1', 'photo'],
+    ['/photo.php?fbid=100', 'photo'],
+    ['/alice/photos/a.1/2', 'photo'],
+    ['/permalink.php?story_fbid=123&id=456', 'post'],
+    ['/events/999/permalink/123/', 'post'],
+    ['/alice/posts/pfbid0X', 'post'],
+    ['/groups/1/posts/5', 'post'],
+    ['/groups/hikers', 'group'],
+    ['/groups/hikers/', 'group'],
+    ['/watch/?v=654', 'video'],
+    ['/alice/videos/77', 'video'],
+    ['/reel/88', 'video'],
+    ['/events/999', 'event'],
+    ['/marketplace/item/555', 'listing'],
+    ['/fixture-page', null],
+  ]) assert.strictEqual(kindOf(href), kind, href);
+  console.log('js search kinds ok');
+})();

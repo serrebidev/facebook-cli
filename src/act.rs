@@ -36,6 +36,7 @@ pub fn mime_of(name: &str) -> &'static str {
         "webp" => "image/webp",
         "mp4" => "video/mp4",
         "mov" => "video/quicktime",
+        "webm" => "video/webm",
         "pdf" => "application/pdf",
         _ => "image/jpeg",
     }
@@ -63,11 +64,7 @@ pub(crate) async fn attach_files(
         ok(&b
             .eval(
                 t,
-                &format!(
-                    "window.__fb.composeAttach({},{})",
-                    json!(name),
-                    json!(mime)
-                ),
+                &format!("window.__fb.composeAttach({},{})", json!(name), json!(mime)),
             )
             .await?)?;
     }
@@ -87,18 +84,26 @@ async fn type_into(b: &Browser, t: &Tab, text: &str) -> Res<()> {
 }
 
 pub async fn post(d: &Daemon, args: &[String], cwd: &str, out: &Out) -> Res<()> {
-    let a = parse(args, &["img", "to"], &["dry"])?;
+    let a = parse(args, &["img", "video", "to"], &["dry"])?;
     let text = a.pos.join(" ");
     let imgs = a.opts_all("img");
-    if text.is_empty() && imgs.is_empty() {
-        return Err("usage: post <text> [--img file]... [--to public|friends|me]".into());
+    let videos = a.opts_all("video");
+    if text.is_empty() && imgs.is_empty() && videos.is_empty() {
+        return Err(
+            "usage: post <text> [--img file]... [--video file]... [--to public|friends|me]".into(),
+        );
     }
     let audience = a.opt("to").map(|s| match s {
         "public" | "friends" | "me" => Ok(s.to_string()),
         _ => Err("--to must be public|friends|me".to_string()),
     });
     let audience = audience.transpose()?;
-    let files: Vec<_> = imgs.iter().map(|p| file_arg(p, cwd)).collect::<Res<_>>()?;
+    // photos and videos ride the same composer file input
+    let files: Vec<_> = imgs
+        .iter()
+        .chain(videos.iter())
+        .map(|p| file_arg(p, cwd))
+        .collect::<Res<_>>()?;
     let b = d.browser(out).await?;
     let gen0 = b.generation.load(std::sync::atomic::Ordering::SeqCst);
     // mutations hold the shared side of the account lock; an account import takes the exclusive side
@@ -423,6 +428,236 @@ fn current_reaction(label: &str, picker: &[String]) -> Option<usize> {
         .map(|(i, _)| i)
 }
 
+/// Join a group. Idempotent: already joined / already requested is reported,
+/// not re-clicked. A group that asks membership questions gets its questions
+/// reported back; answering them is the user's call, nothing is submitted.
+pub async fn group_join(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
+    let a = parse(args, &[], &[])?;
+    let spec = a.pos.first().ok_or("usage: group-join <group>")?;
+    let b: Arc<Browser> = d.browser(out).await?;
+    let p = crate::ops::group_path(d, spec)?;
+    let gen0 = b.generation.load(std::sync::atomic::Ordering::SeqCst);
+    // mutations hold the shared side of the account lock; an account import takes the exclusive side
+    let _account = d.account.read().await;
+    if b.generation.load(std::sync::atomic::Ordering::SeqCst) != gen0 {
+        return Err(
+            "the account changed while this command waited; nothing was done, try again".into(),
+        );
+    }
+    let t = b.acquire().await?;
+    same_account(&b, gen0)?;
+    let r = async {
+        b.goto(&t, &format!("https://www.facebook.com{p}")).await?;
+        let state = match b.eval(&t, "window.__fb.groupWait()").await? {
+            Value::String(s) => s,
+            other => return Err(format!("unexpected group button state: {other}")),
+        };
+        match state.as_str() {
+            "joined" => {
+                out.line("already joined");
+                return Ok(());
+            }
+            "pending" => {
+                out.line("join request already pending");
+                return Ok(());
+            }
+            "can-join" => {}
+            _ => return Err("no Join group button on this group page".into()),
+        }
+        same_account(&b, gen0)?;
+        if out.cancelled() {
+            return Err("cancelled by client; no join was attempted".into());
+        }
+        let after = match b.eval(&t, "window.__fb.groupJoin()").await? {
+            Value::String(s) => s,
+            other => return Err(format!("unexpected join result: {other}")),
+        };
+        if let Some(qs) = after.strip_prefix("questions:") {
+            // TSV so callers can present the questions and answer them with
+            // group-apply: a count line, then one `q<TAB>question` per line
+            let list: Vec<String> = serde_json::from_str(qs).unwrap_or_default();
+            out.line(format!("questions\t{}", list.len()));
+            for q in &list {
+                out.line(format!("q\t{}", q.replace(['\t', '\n'], " ")));
+            }
+            return Ok(());
+        }
+        match after.as_str() {
+            "joined" => {
+                out.line("joined group");
+                Ok(())
+            }
+            "pending" => {
+                out.line("join requested; an admin must approve");
+                Ok(())
+            }
+            other => Err(format!("join not confirmed (state: {other})")),
+        }
+    }
+    .await;
+    b.release(t).await;
+    r
+}
+
+/// Leave a group. Idempotent: not a member is reported, not an error.
+/// A pending join request is left alone (cancelling is a different action).
+pub async fn group_leave(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
+    let a = parse(args, &[], &[])?;
+    let spec = a.pos.first().ok_or("usage: group-leave <group>")?;
+    let b: Arc<Browser> = d.browser(out).await?;
+    let p = crate::ops::group_path(d, spec)?;
+    let gen0 = b.generation.load(std::sync::atomic::Ordering::SeqCst);
+    // mutations hold the shared side of the account lock; an account import takes the exclusive side
+    let _account = d.account.read().await;
+    if b.generation.load(std::sync::atomic::Ordering::SeqCst) != gen0 {
+        return Err(
+            "the account changed while this command waited; nothing was done, try again".into(),
+        );
+    }
+    let t = b.acquire().await?;
+    same_account(&b, gen0)?;
+    let r = async {
+        b.goto(&t, &format!("https://www.facebook.com{p}")).await?;
+        let state = match b.eval(&t, "window.__fb.groupWait()").await? {
+            Value::String(s) => s,
+            other => return Err(format!("unexpected group button state: {other}")),
+        };
+        match state.as_str() {
+            "can-join" => {
+                out.line("not a member of this group");
+                return Ok(());
+            }
+            "pending" => {
+                return Err(
+                    "your join request is still pending; cancel it from the group page".into(),
+                );
+            }
+            "joined" => {}
+            _ => return Err("no membership button on this group page".into()),
+        }
+        same_account(&b, gen0)?;
+        if out.cancelled() {
+            return Err("cancelled by client; you are still a member".into());
+        }
+        let opened = match b.eval(&t, "window.__fb.groupLeaveOpen()").await? {
+            Value::String(s) => s,
+            other => return Err(format!("unexpected leave result: {other}")),
+        };
+        if opened != "ready" {
+            return Err(format!("leave not confirmed (state: {opened})"));
+        }
+        same_account(&b, gen0)?;
+        if out.cancelled() {
+            return Err("cancelled by client; you are still a member".into());
+        }
+        let after = match b.eval(&t, "window.__fb.groupLeaveConfirm()").await? {
+            Value::String(s) => s,
+            other => return Err(format!("unexpected leave result: {other}")),
+        };
+        match after.as_str() {
+            "left" => {
+                out.line("left group");
+                Ok(())
+            }
+            other => Err(format!("leave not confirmed (state: {other})")),
+        }
+    }
+    .await;
+    b.release(t).await;
+    r
+}
+
+/// Join a group that asks membership questions, answering them in order:
+/// `group-apply <group> <answer>...`. Choice questions take the answer that
+/// matches an option label; text questions take the answer as typed.
+pub async fn group_apply(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
+    let a = parse(args, &[], &[])?;
+    let spec = a
+        .pos
+        .first()
+        .ok_or("usage: group-apply <group> <answer>...")?;
+    let answers: Vec<String> = a.pos.iter().skip(1).cloned().collect();
+    if answers.is_empty() {
+        return Err("usage: group-apply <group> <answer>...".into());
+    }
+    let b: Arc<Browser> = d.browser(out).await?;
+    let p = crate::ops::group_path(d, spec)?;
+    let gen0 = b.generation.load(std::sync::atomic::Ordering::SeqCst);
+    // mutations hold the shared side of the account lock; an account import takes the exclusive side
+    let _account = d.account.read().await;
+    if b.generation.load(std::sync::atomic::Ordering::SeqCst) != gen0 {
+        return Err(
+            "the account changed while this command waited; nothing was done, try again".into(),
+        );
+    }
+    let t = b.acquire().await?;
+    same_account(&b, gen0)?;
+    let r = async {
+        b.goto(&t, &format!("https://www.facebook.com{p}")).await?;
+        let state = match b.eval(&t, "window.__fb.groupWait()").await? {
+            Value::String(s) => s,
+            other => return Err(format!("unexpected group button state: {other}")),
+        };
+        match state.as_str() {
+            "joined" => {
+                out.line("already joined");
+                return Ok(());
+            }
+            "pending" => {
+                out.line("join request already pending");
+                return Ok(());
+            }
+            "can-join" => {}
+            _ => return Err("no Join group button on this group page".into()),
+        }
+        same_account(&b, gen0)?;
+        if out.cancelled() {
+            return Err("cancelled by client; no answers were submitted".into());
+        }
+        let filled = match b
+            .eval(&t, &format!("window.__fb.groupApplyFill({})", json!(answers)))
+            .await?
+        {
+            Value::String(s) => s,
+            other => return Err(format!("unexpected apply result: {other}")),
+        };
+        if let Some(want) = filled.strip_prefix("no-option:") {
+            return Err(format!(
+                "no option matches the answer '{want}'; nothing was submitted"
+            ));
+        }
+        let after = if filled == "ready" {
+            same_account(&b, gen0)?;
+            if out.cancelled() {
+                return Err("cancelled by client; no answers were submitted".into());
+            }
+            match b.eval(&t, "window.__fb.groupApplySubmit()").await? {
+                Value::String(s) => s,
+                other => return Err(format!("unexpected apply result: {other}")),
+            }
+        } else {
+            filled
+        };
+        match after.as_str() {
+            "joined" => {
+                out.line("joined group");
+                Ok(())
+            }
+            "pending" | "submitted" => {
+                out.line("answers submitted; an admin must approve");
+                Ok(())
+            }
+            "no-questions" => {
+                Err("this group shows no membership questions; use group-join instead".into())
+            }
+            other => Err(format!("answers not confirmed submitted (state: {other})")),
+        }
+    }
+    .await;
+    b.release(t).await;
+    r
+}
+
 pub async fn react(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
     let a = parse(args, &[], &[])?;
     let spec = a
@@ -519,6 +754,14 @@ pub async fn react(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn video_files_keep_a_video_mime_type() {
+        assert_eq!(mime_of("clip.MP4"), "video/mp4");
+        assert_eq!(mime_of("clip.mov"), "video/quicktime");
+        assert_eq!(mime_of("story.webm"), "video/webm");
+        assert_eq!(mime_of("photo.jpg"), "image/jpeg");
+    }
 
     #[test]
     fn current_reaction_prefers_the_longest_matching_label() {
