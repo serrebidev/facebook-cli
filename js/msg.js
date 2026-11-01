@@ -462,10 +462,12 @@
   return gone?true:'not confirmed by messenger';
  };
  // Find one message in the open thread: the newest whose text contains
- // `match` (any sender), or the newest message at all. Same discipline as
+ // `match` (any sender), or the newest message at all. `nth` counts
+ // matches from the newest (0 = the newest), so a caller that shows the
+ // user a list can name an older duplicate exactly. Same discipline as
  // unsendOpen: start from the newest rows, never pick among half-rendered
  // ones, never act on a row with no readable text or attachment.
- F.msgTarget=async match=>{
+ F.msgTarget=async(match,nth=0)=>{
   const log=document.querySelector('[role=log]');
   if(!log)return null;
   const sc=F.scroller(log);
@@ -474,10 +476,21 @@
   const ready=await waitFor(()=>[...log.querySelectorAll('[role=article]')].slice(-4).every(a=>a.querySelector('[aria-label]')),5000,100);
   if(!ready)return null;
   if(!await F.settleBottom(log,3,300))return null;
+  return F.msgScan(match,nth);
+ };
+ // The scan itself, over whatever is currently rendered: the nth newest
+ // message whose text contains `match` and that has readable text or an
+ // attachment. Verification re-runs it, so a duplicate is re-found by
+ // the same counting that targeted it, never by text alone.
+ F.msgScan=(match,nth=0)=>{
+  const log=document.querySelector('[role=log]');
+  if(!log)return null;
+  let seen=0;
   for(const a of [...log.querySelectorAll('[role=article]')].reverse()){
    const m=F.parseMessage(a,log);
    if(match&&!(m.text||'').toLowerCase().includes(match.toLowerCase()))continue;
    if(!m.text&&!m.att)continue;
+   if(seen++<nth)continue;
    return{a,m};
   }
   return null;
@@ -496,10 +509,10 @@
  const REACT_EMOJI={like:'👍',love:'❤️',care:'🥰',haha:'😆',wow:'😮',sad:'😢',angry:'😡'};
  // React to one message: its toolbar reaction button opens an emoji
  // picker; pick ours and verify it landed on the message.
- F.msgReact=async(match,name)=>{
+ F.msgReact=async(match,name,nth=0)=>{
   const emoji=REACT_EMOJI[name];
   if(!emoji)return 'unknown reaction: '+name;
-  const t=await F.msgTarget(match);
+  const t=await F.msgTarget(match,nth);
   if(!t)return match?'no message contains that text':'no message found in this chat';
   const btn=await F.msgToolbarBtn(t.a,/react|emoji|cảm xúc|réagir/i);
   if(!btn)return 'no react button on that message';
@@ -514,19 +527,20 @@
   },4000,100);
   if(!pick)return 'the reaction picker did not open';
   F.press(pick);
-  const log=document.querySelector('[role=log]');
-  // the message row itself may be re-rendered by the reaction: re-find it
+  // The message row itself may be re-rendered by the reaction: re-find
+  // it by the same nth-from-newest scan that targeted it. (Re-finding
+  // by text alone lands on the newest duplicate and can miss.)
   const ok=await waitFor(()=>{
-   const again=[...log.querySelectorAll('[role=article]')].reverse().find(x=>{const mm=F.parseMessage(x,log);return mm.text===t.m.text&&mm.sender===t.m.sender});
-   return !!again&&F.parseMessage(again,log).re.includes(emoji);
+   const again=F.msgScan(match,nth);
+   return !!again&&again.m.re.includes(emoji);
   },3000,150);
   if(!ok)return 'the reaction did not land on the message';
   return{text:'reacted '+emoji+' to '+(t.m.sender||'a message')+': '+(t.m.text||'['+(t.m.att||'attachment')+']')};
  };
  // Arm a reply: the message's toolbar Reply button makes Messenger quote
  // it above the composer; the caller then sends the reply text normally.
- F.msgReplyOpen=async match=>{
-  const t=await F.msgTarget(match);
+ F.msgReplyOpen=async(match,nth=0)=>{
+  const t=await F.msgTarget(match,nth);
   if(!t)return match?'no message contains that text':'no message found in this chat';
   const btn=await F.msgToolbarBtn(t.a,/^reply|reply|trả lời|répondre/i);
   if(!btn)return 'no reply button on that message';
