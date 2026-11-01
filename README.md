@@ -155,6 +155,8 @@ permanent removal after 30 days).
 Most Messenger chats are end-to-end encrypted. Their history needs your Messenger PIN, because a new browser profile has no keys. Run `echo "$PIN" | fb unlock -` once (or `FB_PIN=... fb unlock`), so the PIN never appears in `ps`. Until then `chats` lists them with the `e` flag and `read`/`send` on them report that the chat is locked. `unlock` can reopen the Enter PIN banner even after a normal command skipped the
 optional restore prompt. For accessible conversations, the CLI closes the optional history-restore prompt through Facebook's own buttons and continues without restoring. This does not recover missing encrypted history; `unlock` is still required for that.
 
+Facebook remembers a restore you declined: once "Don't restore messages" has been chosen on a browser profile, Messenger does not offer the PIN prompt there again, and `unlock` reports that no prompt exists instead of succeeding. Chats that profile already restored still read; history that is missing from it can only be restored on a profile Facebook still offers the prompt to. Messages are labelled with their full date once they are older than today ("At September 5, 2026, 10:24 PM, You: ..."), which `read` parses like any other timestamp.
+
 ## Configuration
 
 These are read by the daemon when it starts. If a daemon is already running, run `fb quit` first so a new value (for example `FB_CDP`) takes effect.
