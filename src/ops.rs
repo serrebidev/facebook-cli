@@ -417,6 +417,86 @@ pub async fn groups(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
     b.release(t).await;
     r
 }
+/// `/groups/<id>` from any path under a group, ignoring query and fragment.
+fn group_base(path: &str) -> Option<String> {
+    let path = path.split(['?', '#']).next().unwrap_or("");
+    let seg = path
+        .strip_prefix("/groups/")?
+        .split('/')
+        .next()
+        .filter(|s| {
+            !s.is_empty() && !matches!(*s, "feed" | "discover" | "joins" | "create" | "search")
+        })?;
+    Some(format!("/groups/{seg}"))
+}
+
+/// The members of one group, from its members page
+/// (facebook.com/groups/<id>/members), gathered with scrolling like the
+/// joined-groups list. Rows: name, ref (or the profile URL with --urls),
+/// role / join info.
+pub async fn members(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
+    let a = parse(args, &[], &["urls"])?;
+    let spec = a
+        .pos
+        .first()
+        .ok_or("usage: members <group> [-n N] [--urls]")?;
+    let b = d.browser(out).await?;
+    let path = if let Some(p) = d.refs.get(spec) {
+        p
+    } else if spec.starts_with('/') || spec.starts_with("http") {
+        fb_path(spec).ok_or_else(|| format!("not a facebook url: {spec}"))?
+    } else {
+        format!("/groups/{}", spec.trim_start_matches('@'))
+    };
+    let group = group_base(&path).ok_or_else(|| format!("'{spec}' is not a group"))?;
+    let t = b.acquire().await?;
+    let r = async {
+        b.goto(&t, &format!("https://www.facebook.com{group}/members"))
+            .await?;
+        let v = b
+            .eval(
+                &t,
+                &format!(
+                    "window.__fb.groupMembers({}).then(JSON.stringify)",
+                    a.n.unwrap_or(200)
+                ),
+            )
+            .await?;
+        let v: Value =
+            serde_json::from_str(v.as_str().unwrap_or("{}")).map_err(|e| e.to_string())?;
+        if let Some(e) = v["err"].as_str() {
+            return Err(e.to_string());
+        }
+        for row in v["rows"].as_array().cloned().unwrap_or_default() {
+            let cells: Vec<Value> = row.as_array().cloned().unwrap_or_default();
+            let get = |i: usize| cells.get(i).and_then(Value::as_str).unwrap_or("");
+            let (id, info) = match cells.get(1) {
+                Some(Value::Object(o)) => {
+                    let p = o.get("v").and_then(Value::as_str).unwrap_or("");
+                    let id = if a.flag("urls") {
+                        format!("https://www.facebook.com{p}")
+                    } else {
+                        d.refs.put('u', p)
+                    };
+                    (id, get(2))
+                }
+                _ => (get(1).to_owned(), get(2)),
+            };
+            out.line(format!(
+                "{}\t{id}\t{}",
+                get(0).replace(['\t', '\n'], " "),
+                info.replace(['\t', '\n'], " ")
+            ));
+        }
+        if let Some(note) = v["note"].as_str() {
+            out.err(format!("{note}\n"));
+        }
+        Ok(())
+    }
+    .await;
+    b.release(t).await;
+    r
+}
 
 pub async fn profile(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
     let a = parse(args, &[], &[])?;
@@ -619,6 +699,34 @@ mod tests {
         ] {
             assert!(!is_post_path(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn group_base_ignores_query_fragment_and_subpaths() {
+        for (path, want) in [
+            ("/groups/123", Some("/groups/123")),
+            ("/groups/123/", Some("/groups/123")),
+            ("/groups/123?ref=share", Some("/groups/123")),
+            ("/groups/123/?ref=share", Some("/groups/123")),
+            ("/groups/123#about", Some("/groups/123")),
+            (
+                "/groups/hikers.uk/members/?a=1#b",
+                Some("/groups/hikers.uk"),
+            ),
+            ("/groups/feed", None),
+            ("/groups/feed/?x=1", None),
+            ("/groups/?ref=share", None),
+            ("/groups/", None),
+            ("/some.user", None),
+        ] {
+            assert_eq!(group_base(path).as_deref(), want, "{path}");
+        }
+        assert_eq!(
+            fb_path("https://www.facebook.com/groups/123?ref=share")
+                .and_then(|p| group_base(&p))
+                .as_deref(),
+            Some("/groups/123")
+        );
     }
 
     #[test]

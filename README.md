@@ -72,6 +72,7 @@ Run `fb help` for the exact list. `<who>` is `me`, a name, `@vanity`, an id, a U
 | `profile [who]` | key/value lines |
 | `friends [who] [-n 30]` | name, ref, mutual friends |
 | `groups [-n 100] [--urls]` | groups you have joined: name, ref (or URL with `--urls`), privacy and size |
+| `members <group> [-n 200] [--urls]` | people in a group: name, ref (or URL with `--urls`), role or join info |
 | `search <q> [--type people\|pages\|groups\|posts\|events] [--match text]... [-n 10]` | name, ref, visible info |
 | `stories <who> [--out dir] [-n N]` | download visible stories in a protected session |
 | `photos <who> [--out dir] [-n 10 \| --all]` | download visible profile photos in a protected session |

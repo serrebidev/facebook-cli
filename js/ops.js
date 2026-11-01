@@ -156,16 +156,16 @@
   });
   return {rows:rows.map(r=>r.v),complete:!!listRoot&&listRoot.isConnected&&main()?.contains(listRoot)&&friendRoot()===listRoot&&hasCards&&!unparsed.size&&rows.length<n&&bottomSince!==null&&Date.now()-bottomSince>=2500&&!(listRoot||main())?.querySelector('[aria-busy="true"],[role=progressbar]')};
  };
+ const linkShown=a=>{const s=getComputedStyle(a);return s.visibility==='visible'&&(a.getClientRects().length>0||s.display==='contents'&&!!clean(a.innerText))};
  F.groups=async(n)=>{
   const ok=await waitFor(()=>document.querySelector('[role=main] a[href*="/groups/"]'),12000);
   if(!ok)return {rows:[],note:'no groups visible'};
   await sleep(600);
   /* details can render on a later scroll pass than the name, so merge every pass into one entry per group */
   const acc=new Map();
-  const shown=a=>{const s=getComputedStyle(a);return s.visibility==='visible'&&(a.getClientRects().length>0||s.display==='contents'&&!!clean(a.innerText))};
   const scan=()=>{
    for(const a of document.querySelectorAll('[role=main] a[href]')){
-    const p=groupPath(a.getAttribute('href'));if(!p||!shown(a))continue;
+    const p=groupPath(a.getAttribute('href'));if(!p||!linkShown(a))continue;
     let lines=(a.innerText||'').split('\n').map(clean).filter(Boolean);
     if(!lines.length)lines=[clean(a.getAttribute('aria-label')||a.querySelector('img[alt]')?.alt||'')].filter(Boolean);
     if(lines.length)addGroup(acc,p,lines);
@@ -176,6 +176,35 @@
   /* the limit can be reached before the last link of a group renders: let it settle once */
   await sleep(300);scan();
   return {rows:[...acc].slice(0,n).map(([k,g])=>[g.name,k,trunc(g.info.join(' · '),120)])};
+ };
+ F.groupMembers=async(n)=>{
+  const ok=await waitFor(()=>document.querySelector('[role=main] a[href]'),12000);
+  if(!ok)return {rows:[],note:'no members visible'};
+  await sleep(600);
+  /* role / join details can render on a later scroll pass than the name, so merge every pass into one entry per member */
+  const acc=new Map();
+  const scan=()=>{
+   const owner=new Map();
+   for(const a of document.querySelectorAll('[role=main] a[href]')){
+    const p=profilePath(a.getAttribute('href'));if(!p||!linkShown(a))continue;
+    const nm=clean(a.innerText||'');if(!nm||nm.length>80)continue;
+    const card=a.closest('[role=listitem]')||a.closest('[role=article]');
+    /* a card belongs to its first profile link; later ones ("Added by Bob") are details, not members */
+    if(card&&owner.has(card)&&owner.get(card)!==p)continue;
+    if(card)owner.set(card,p);
+    const block=card||(a.parentElement&&a.parentElement.parentElement);
+    const own=new Set(vtext(a,true).map(clean));
+    const chunks=(block?vtext(block,true):[nm]).map(clean).filter(Boolean);
+    const cur=acc.get(p)||{name:nm,info:[]};
+    for(const c of chunks)if(c!==nm&&c!==cur.name&&!own.has(c)&&!cur.info.includes(c)&&!/^(Add friend|Message|Follow|Friends|See all)$/i.test(c))cur.info.push(c);
+    acc.set(p,cur);
+   }
+   return [...acc.keys()].map(k=>({k}));
+  };
+  await gather(n,scan);
+  /* the limit can be reached before the details of the last member render: let them settle once */
+  await sleep(300);scan();
+  return {rows:[...acc].slice(0,n).map(([p,m])=>[m.name,{r:'u',v:p},trunc(m.info.join(' · '),120)])};
  };
  F.notifs=async(n)=>{
   const ok=await waitFor(()=>document.querySelector('[role=main] [role=list] [role=listitem] a[href]')||document.querySelector('[role=list] [role=listitem] a[href]'),12000);
