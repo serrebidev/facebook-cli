@@ -223,3 +223,57 @@ console.log('js removed-newest ok');
   assert.deepStrictEqual(await view([comment('Anonymous participant', 'https://l.facebook.com/l.php?u=x')]), ['c\tAnonymous participant\t1h\tHello Bob']);
   console.log('js post view comment refs ok');
 })().catch(e => { console.error(e); process.exit(1); });
+
+// members: profile links go through profilePath, and details that render after the name are merged in
+(async () => {
+  const vm = require('vm');
+  class El {
+    constructor(attrs = {}, text = []) { this.attrs = attrs; this.text = text; this.children = []; this.parentElement = null; }
+    add(c) { c.parentElement = this; this.children.push(c); return c; }
+    getAttribute(k) { return this.attrs[k] ?? null; }
+    get innerText() { return this.text.filter(x => !x.hidden).join(' '); }
+    getClientRects() { return this.attrs.hidden ? [] : [{}]; }
+    closest(sel) { const m = /^\[([^=]+)=([^\]]+)\]$/.exec(sel); for (let e = this; e; e = e.parentElement) if (m && e.attrs[m[1]] === m[2]) return e; return null; }
+    anchors() { return this.children.flatMap(c => [...(c.attrs.href !== undefined ? [c] : []), ...c.anchors()]); }
+  }
+  const run = async (build, n = 10) => {
+    const main = new El({ role: 'main' });
+    const scans = build(main);
+    scans.next();
+    const doc = { querySelector: () => (main.anchors()[0] || null), querySelectorAll: () => main.anchors() };
+    const ctx = vm.createContext({ window: { scrollBy: () => scans.next() }, document: doc, location: { href: 'https://www.facebook.com/groups/1/members' }, URL, setTimeout, Date, innerHeight: 800, getComputedStyle: () => ({ visibility: 'visible', display: 'block' }) });
+    vm.runInContext(src, ctx);
+    const G = ctx.window.__fb;
+    Object.assign(G, { sleep: async () => {}, waitFor: async f => f(), vtext: (e, visibleOnly) => e.text.filter(x => !(visibleOnly && x.hidden)).map(x => x.hidden ? x.t : x) });
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '../js/ops.js'), 'utf8'), ctx);
+    return JSON.parse(JSON.stringify((await G.groupMembers(n)).rows));
+  };
+  const item = (main, href, name, ...info) => { const li = main.add(new El({ role: 'listitem' }, [...name.split(' '), ...info])); li.add(new El({ href }, name.split(' '))); return li; };
+  const rows = await run(function* (main) {
+    main.add(new El({ href: '/ghost.user', hidden: true }, ['Ghost']));
+    const alice = item(main, '/alice.smith', 'Alice Smith');
+    alice.add(new El({ href: '/added.by' }, ['Added by Carol']));
+    item(main, '/people/Bob-Jones/61512345678901/', 'Bob Jones', 'Member');
+    item(main, '/groups/1/posts/5', 'Some Post');
+    item(main, 'https://example.org/stranger', 'Stranger');
+    yield;
+    alice.text = ['Alice', 'Smith', { hidden: true, t: 'Ghost' }, 'Admin', 'Added by Carol'];
+    while (true) yield;
+  });
+  assert.deepStrictEqual(rows, [
+    ['Alice Smith', { r: 'u', v: '/alice.smith' }, 'Admin · Added by Carol'],
+    ['Bob Jones', { r: 'u', v: '/profile.php?id=61512345678901' }, 'Member'],
+  ]);
+  // a virtualized list reuses a card element for the next member
+  const recycled = await run(function* (main) {
+    const li = item(main, '/alice.smith', 'Alice Smith');
+    yield;
+    li.children[0].attrs.href = '/bob.jones'; li.children[0].text = ['Bob', 'Jones']; li.text = ['Bob', 'Jones', 'Member'];
+    while (true) yield;
+  }, 2);
+  assert.deepStrictEqual(recycled, [
+    ['Alice Smith', { r: 'u', v: '/alice.smith' }, ''],
+    ['Bob Jones', { r: 'u', v: '/bob.jones' }, 'Member'],
+  ]);
+  console.log('js members ok');
+})().catch(e => { console.error(e); process.exit(1); });
