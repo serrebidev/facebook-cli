@@ -93,6 +93,12 @@ assert.deepStrictEqual(L('Lúc 15:33 12 Tháng 12, 2024, Bạn: a: b'), { t: '15
 assert.deepStrictEqual(L('At 4:05 PM, Alice Smith: hello', 'Nhập, x'), { t: '4:05 PM', sender: 'Alice Smith', text: 'hello' });
 assert.deepStrictEqual(L('Lúc 18:43, Bạn', 'Nhập, Tin nhắn do Bạn gửi lúc 18:43'), { t: '18:43', sender: 'Bạn', text: '' }); // attachment: no text
 assert.deepStrictEqual(L('Nhập, Tin nhắn do Bạn gửi lúc 18:43: x'), { t: '', sender: '', text: '' }); // only the secondary label
+// The timestamp itself can carry a comma: "At September 5, 2026, 10:24 PM, You: ...".
+// The sender separator is the LAST ", " before the colon, never the date's own comma.
+assert.deepStrictEqual(L('At September 5, 2026, 10:24 PM, You: Hello everyone, and thanks'), { t: '10:24 PM', sender: 'You', text: 'Hello everyone, and thanks' });
+assert.deepStrictEqual(L('At December 12, 2024, 3:05 PM, Alice: hi'), { t: '3:05 PM', sender: 'Alice', text: 'hi' });
+// attachment-only rows keep their sender and have no text
+assert.deepStrictEqual(L('At September 5, 2026, 10:24 PM, You'), { t: '10:24 PM', sender: 'You', text: '' });
 console.log('js labels ok');
 
 // id-less rows: long varied overlaps are merged, ambiguous ones are never guessed
