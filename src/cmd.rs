@@ -65,6 +65,10 @@ async fn run_inner(d: &Daemon, argv: &[String], _cwd: &str, out: &Out) -> Res<()
             out.line(crate::help::HELP);
             Ok(())
         }
+        "resolve" => {
+            out.line(d.refs.resolve(&argv[1..])?);
+            Ok(())
+        }
         "status" => crate::dev::status(d, out).await,
         "page" => crate::page::run(d, &argv[1..], _cwd, out).await,
         "eval" => crate::dev::eval(d, &argv[1..], out).await,

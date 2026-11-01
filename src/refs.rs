@@ -105,6 +105,14 @@ impl Refs {
         out.push_str(full);
     }
 
+    /// Resolve exactly one saved handle without navigating or guessing a target.
+    pub fn resolve(&self, args: &[String]) -> Result<String, String> {
+        let [token] = args else {
+            return Err("usage: resolve <ref>".into());
+        };
+        self.get(token).ok_or_else(|| "unknown reference; read the item again".into())
+    }
+
     pub fn get(&self, token: &str) -> Option<String> {
         self.state.lock().unwrap().map.get(token).cloned()
     }
@@ -167,6 +175,19 @@ mod tests {
         r.put_into('p', &urls[0], &mut out);
         assert_eq!(out, format!(">{}", original_ref('p', &urls[0], 4)));
         let _ = std::fs::remove_file(f);
+    }
+
+    #[test]
+    fn resolve_requires_one_known_reference_and_preserves_its_target() {
+        let file = tmp("resolve");
+        let refs = Refs::load(file.clone());
+        let target = "/profile.php?id=123&sk=about";
+        let token = refs.put('u', target);
+        assert_eq!(refs.resolve(&[token.clone()]).unwrap(), target);
+        assert!(refs.resolve(&[]).is_err());
+        assert!(refs.resolve(&[token, "extra".into()]).is_err());
+        assert!(refs.resolve(&["unknown".into()]).is_err());
+        let _ = std::fs::remove_file(file);
     }
 
     #[test]
