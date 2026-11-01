@@ -949,8 +949,8 @@ pub async fn unlock(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
             b.goto(&t, "https://www.facebook.com/messages/t/").await?;
             match b.eval(&t, "window.__fb.pinFocus(20000)").await? {
                 Value::Bool(true) => {}
-                Value::String(s) => Err(s)?,
-                _ => Err("unexpected")?,
+                Value::String(s) => return Err(s),
+                _ => return Err("unexpected".into()),
             }
         }
         // Type the PIN as real keystrokes, one digit at a time. A single
@@ -962,34 +962,28 @@ pub async fn unlock(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
             b.key(&t, &c.to_string(), &format!("Digit{c}"), 48 + d, 0)
                 .await?;
         }
-        // Wait for the restore to actually finish (budget 4 minutes): the
-        // PIN auto-submits into a "Verifying your PIN" state, and calling
-        // that success early — then parking this tab frozen — kills the
-        // restore mid-flight. 'VERIFYING' at budget end is not an error:
-        // the PIN was accepted, Facebook is still working.
+        // Wait for the restore to actually finish (budget 4 minutes, covered
+        // by the unlock command's own allowance in cmd.rs): the PIN
+        // auto-submits into a "Verifying your PIN" state, and reporting
+        // success early would hide a restore that is still running.
+        // 'VERIFYING' at budget end is not an error: the PIN was accepted,
+        // Facebook is still working.
         match b.eval(&t, "window.__fb.pinDone(240000)").await? {
             Value::Bool(true) => {
                 out.line("unlocked");
-                Ok(false)
+                Ok(())
             }
             Value::String(s) if s == "VERIFYING" => {
-                out.line("PIN accepted; Facebook is still restoring your chat history — it finishes in the background while BlindFB stays open");
-                Ok(true)
+                out.line("PIN accepted; Facebook is still restoring your chat history — it finishes in the background as long as the browser stays open");
+                Ok(())
             }
             Value::String(s) => Err(s),
             _ => Err("unexpected".into()),
         }
     }
     .await;
-    // A still-verifying restore lives in this page: a frozen parked page
-    // runs no timers or workers, so a verifying tab returns to the pool
-    // live; every other outcome parks frozen as usual.
-    if matches!(r, Ok(true)) {
-        b.release_live(t).await;
-    } else {
-        b.release(t).await;
-    }
-    r.map(|_| ())
+    b.release(t).await;
+    r
 }
 
 /// Remove (for everyone) your most recent message in a chat, optionally the latest one containing `--match`.

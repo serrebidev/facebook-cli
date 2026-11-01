@@ -116,6 +116,7 @@ pub struct Browser {
 }
 
 const MAX_IDLE: usize = 6;
+const LIFECYCLE_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl Browser {
     pub async fn init(cdp: Arc<Cdp>, _requested_visible: bool) -> Arc<Browser> {
@@ -425,19 +426,7 @@ impl Browser {
         self.release_as(t, "").await
     }
 
-    /// Pool a tab that must stay live: the page still has work running in
-    /// it (a Messenger restore verifying in the page). This tree never
-    /// freezes parked tabs, so it is the same pool path as release; it
-    /// exists so the unlock call site can state the requirement.
-    pub async fn release_live(&self, t: Tab) {
-        self.release_as_frozen(t, "", false).await
-    }
-
-    pub async fn release_as(&self, t: Tab, kind: &str) {
-        self.release_as_frozen(t, kind, true).await
-    }
-
-    async fn release_as_frozen(&self, mut t: Tab, kind: &str, _freeze: bool) {
+    pub async fn release_as(&self, mut t: Tab, kind: &str) {
         t.armed = false;
         t.permit = None;
         // the account changed while this tab was in use: its page belongs to the previous login
@@ -586,6 +575,26 @@ impl Browser {
             .call(Some(&t.session), "Input.insertText", json!({"text":text}))
             .await
             .map(|_| ())
+    }
+
+    /// Freeze or unfreeze a tab's page: a frozen page runs no timers and
+    /// renders nothing, so a parked background tab costs no CPU. A browser
+    /// that answers with an error leaves the page as it was and is ignored,
+    /// but one that never answers is an `Err`: the caller must retire the
+    /// tab, since its state is unknown.
+    pub async fn set_lifecycle(&self, t: &Tab, frozen: bool) -> Res<()> {
+        let state = if frozen { "frozen" } else { "active" };
+        tokio::time::timeout(
+            LIFECYCLE_TIMEOUT,
+            self.cdp.call(
+                Some(&t.session),
+                "Page.setWebLifecycleState",
+                json!({"state": state}),
+            ),
+        )
+        .await
+        .map(drop)
+        .map_err(|_| format!("page did not answer the {state} lifecycle request"))
     }
 
     pub async fn key(&self, t: &Tab, key: &str, code: &str, vk: u32, modifiers: u32) -> Res<()> {

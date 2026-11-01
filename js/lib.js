@@ -1,7 +1,7 @@
 (()=>{
  if(window.__fb)return;
  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
- const clean=s=>(s||'').replace(/[͏​-‏⁠﻿]/g,'').replace(/Accounts with a verified badge have been authenticated and can be Meta Verified subscribers or notable persons or brands\.?/gi,'Verified').replace(/[ \t ]+/g,' ').replace(/ *\n */g,'\n').trim();
+ const clean=s=>(s||'').replace(/[͏​-‏⁠﻿]/g,'').replace(/[ \t ]+/g,' ').replace(/ *\n */g,'\n').trim();
  const vtext=(root,visibleOnly=false,includeAriaHidden=false,preserveSpace=false)=>{
   const w=document.createTreeWalker(root,NodeFilter.SHOW_TEXT),o=[];let n;
   while(n=w.nextNode()){
@@ -15,11 +15,14 @@
      if(hidden)continue;const r=document.createRange();r.selectNodeContents(n);if(!r.getClientRects().length)continue;
     }
    }
-   const c=t.replace(/Accounts with a verified badge have been authenticated and can be Meta Verified subscribers or notable persons or brands\.?/gi,'Verified').replace(/[͏​-‏⁠﻿]/g,'').replace(/ /g,' ');if(preserveSpace?c:c.trim())o.push(preserveSpace?c:c.trim());
+   const c=t.replace(/[͏​-‏⁠﻿]/g,'').replace(/ /g,' ');if(preserveSpace?c:c.trim())o.push(preserveSpace?c:c.trim());
   }
   return o;
  };
  const waitFor=async(f,ms=10000,step=60)=>{const t=Date.now();for(;;){let v;try{v=await f()}catch(e){}if(v)return v;if(Date.now()-t>ms)return null;await sleep(step);}};
+ // The verified-badge tooltip is accessibility metadata that lands inside author headers; shorten it there only,
+ // never in message text or drafts, which must compare and read back exactly.
+ const shortBadge=s=>s.replace(/Accounts with a verified badge have been authenticated and can be Meta Verified subscribers or notable persons or brands\.?/gi,'Verified');
  const visible=e=>e.isConnected&&e.getClientRects().length&&getComputedStyle(e).visibility==='visible';
  const enabled=e=>!e.matches(':disabled')&&e.closest('[aria-disabled="true" i],[aria-disabled="false" i]')?.getAttribute('aria-disabled').toLowerCase()!=='true';
  // Use application buttons: removing a modal leaves React's focus trap and state alive.
@@ -80,6 +83,7 @@
  };
  const canon=h=>{try{const u=new URL(h,location.href);const KEEP=['fbid','story_fbid','id','v','set','idorvanity','q'];const mp=u.searchParams.get('multi_permalinks');if(mp&&/^\/groups\/\d+\/?$/.test(u.pathname))return u.pathname.replace(/\/?$/,'/posts/'+mp);for(const p of [...u.searchParams.keys()])if(!KEEP.includes(p))u.searchParams.delete(p);return u.pathname+u.search;}catch(e){return ''}};
  const groupPath=h=>{try{const u=new URL(h,location.href);const m=u.pathname.match(/^\/groups\/([^/]+)\/?$/);if(!m)return null;if(/^(feed|discover|joins|create|search)$/.test(m[1]))return null;return '/groups/'+m[1];}catch(e){return null}};
+ const profilePath=h=>{try{const u=new URL(h,location.href);if(!/^https?:$/.test(u.protocol)||!/^(?:[a-z0-9-]+\.)*facebook\.com$/i.test(u.hostname)||/^(?:l|lm)\./i.test(u.hostname))return null;const pp=u.pathname.match(/^\/people\/[^/]+\/(\d+)\/?$/);if(pp)return '/profile.php?id='+pp[1];if(u.pathname==='/profile.php'){const id=u.searchParams.get('id');return /^\d+$/.test(id||'')?'/profile.php?id='+id:null;}const m=u.pathname.match(/^\/([A-Za-z0-9.]{3,})\/?$/);if(!m)return null;if(/^(groups|watch|reels?|videos|events|pages|search|friends|notifications|messages|marketplace|gaming|bookmarks|settings|help|login|login\.php|l\.php|sharer|sharer\.php|dialog|plugins|hashtag|checkpoint|ajax|photo|photo\.php|permalink\.php|story\.php|share|media|albums|notes|offers|jobs|fundraisers|saved|memories|news|local|people|home|menu|privacy|terms|about|developers|careers)$/i.test(m[1]))return null;return '/'+m[1];}catch(e){return null}};
  /* a group's name is the first line of its first link; the other lines of all its links are details */
  const addGroup=(m,p,lines)=>{const cur=m.get(p);if(!cur){m.set(p,{name:lines[0],info:lines.slice(1)});return}for(const l of lines)if(l!==cur.name&&!cur.info.includes(l))cur.info.push(l)};
  const TIME=/^(\d+\s*(giây|phút|giờ|ngày|tuần|tháng|năm)(\s*trước)?|Hôm qua.*|Vừa xong|Yesterday.*|Just now|\d+\s*(s|m|h|d|w|y|hr|hrs|min|mins)|\d+\s+(seconds?|minutes?|hours?|days?|weeks?|months?|years?)(\s+ago)?|\d{1,2}\s+tháng\s+\d{1,2}.*|(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}.*|il y a .*|hier.*|\d{1,2} (janv|févr|mars|avr|mai|juin|juil|août|sept|oct|nov|déc).*)$/i;
@@ -138,12 +142,24 @@
  // comma BEFORE the time. Colon+space separates sender from text (the time's own colon has no space).
  const TIMERE=/\d{1,2}[:h.]\d{2}(?:\s?[AaPp]\.?[Mm]\.?)?/;
  const parseLabel=labels=>{
-  const lab=labels.find(l=>{const tm=TIMERE.exec(l),c=l.indexOf(', ');return tm&&c>tm.index;})||'';
-  const tm=TIMERE.exec(lab);
-  const colon=lab.indexOf(': ');
-  const before=colon>=0?lab.slice(0,colon):lab;
-  const comma=before.lastIndexOf(', ');
-  return {t:tm?tm[0]:'',sender:comma>=0?before.slice(comma+2).trim():'',text:colon>=0?clean(lab.slice(colon+2)):''};
+  // The sender separator is the LAST ", " before the colon, not the first
+  // comma in the label: the timestamp of anything older than today carries
+  // its own comma ("At September 5, 2026, 10:24 PM, You: hi"), and a finder
+  // that wants a comma after the time never saw a date's label, so those
+  // messages read as empty lines. A label whose only comma sits before the
+  // time stays the secondary "Nhập, Tin nhắn do ... gửi lúc 18:43: x" form and
+  // is skipped.
+  const pick=labels.map(l=>{
+   const tm=TIMERE.exec(l);
+   if(!tm)return null;
+   const colon=l.indexOf(': ');
+   const sep=l.lastIndexOf(', ',colon<0?l.length:colon);
+   return sep>tm.index?{l,tm,colon,sep}:null;
+  }).find(Boolean);
+  if(!pick)return {t:'',sender:'',text:''};
+  const {l,tm,colon,sep}=pick;
+  const before=l.slice(sep+2,colon<0?l.length:colon).trim();
+  return {t:tm[0],sender:before,text:colon>=0?clean(l.slice(colon+2)):''};
  };
- window.__fb={parseLabel,mergeChunks,press,sleep,clean,vtext,waitFor,visible,enabled,dismissRestore,postCards,postText,canon,groupPath,addGroup,TIME,SPON,ACT,trunc,scrollerOf,num};
+ window.__fb={shortBadge,parseLabel,mergeChunks,press,sleep,clean,vtext,waitFor,visible,enabled,dismissRestore,postCards,postText,canon,groupPath,profilePath,addGroup,TIME,SPON,ACT,trunc,scrollerOf,num};
 })();

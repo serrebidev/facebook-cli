@@ -537,13 +537,36 @@ try{
   assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.unlocked))'),true);
   await evaluate('localStorage.pinStyle=JSON.stringify("segmented");localStorage.restored="true";JSON.stringify(true)');
  });
+ await check('unlock presses the Continue button inside an inert role=presentation wrapper',async()=>{
+  await evaluate('localStorage.restored="false";localStorage.wrapContinue="true";localStorage.pinStyle=JSON.stringify("staged");localStorage.removeItem("unlocked");JSON.stringify(true)');
+  try{
+   assert.match(await fb('unlock','1234'),/^unlocked/);
+   assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.unlocked))'),true);
+  }finally{await evaluate('localStorage.removeItem("wrapContinue");localStorage.pinStyle=JSON.stringify("segmented");localStorage.restored="true";JSON.stringify(true)')}
+ });
+ await check('unlock waits for verification when the submitted PIN field is hidden',async()=>{
+  await evaluate('localStorage.restored="false";localStorage.sealHide="true";localStorage.pinStyle=JSON.stringify("real");localStorage.removeItem("unlocked");JSON.stringify(true)');
+  try{
+   assert.match(await fb('unlock','123456'),/^unlocked/);
+   // the fixture finishes verifying 4s after the PIN: reporting earlier is a false success
+   assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.unlocked))'),true);
+  }finally{await evaluate('localStorage.removeItem("sealHide");localStorage.pinStyle=JSON.stringify("segmented");localStorage.restored="true";JSON.stringify(true)')}
+ });
+ await check('unlock without a restore prompt explains why and leaks no chat content',async()=>{
+  await evaluate('localStorage.restored="true";localStorage.restoreRow="true";localStorage.pinStyle=JSON.stringify("none");localStorage.removeItem("unlocked");JSON.stringify(true)');
+  try{
+   let message='';try{await fb('unlock','1234')}catch(e){message=String(e.message||e)}
+   assert.match(message,/PIN restore prompt not found.*Don't restore messages/);
+   assert.ok(!/Rita|send me your PIN/.test(message),'chat list content must not appear in the error');
+  }finally{await evaluate('localStorage.removeItem("restoreRow");localStorage.pinStyle=JSON.stringify("segmented");JSON.stringify(true)')}
+ });
  await check('unlock opens restore from a plain link entry',async()=>{
-  await evaluate('localStorage.restored="false";localStorage.pinStyle=JSON.stringify("link");localStorage.removeItem("unlocked");JSON.stringify(true)');
+  await evaluate('localStorage.restored="true";localStorage.pinStyle=JSON.stringify("link");localStorage.removeItem("unlocked");JSON.stringify(true)');
   assert.match(await fb('unlock','1234'),/^unlocked/);
   assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.unlocked))'),true);
  });
  await check('unlock opens restore from a long banner button',async()=>{
-  await evaluate('localStorage.restored="false";localStorage.pinStyle=JSON.stringify("banner");localStorage.removeItem("unlocked");JSON.stringify(true)');
+  await evaluate('localStorage.restored="true";localStorage.pinStyle=JSON.stringify("banner");localStorage.removeItem("unlocked");JSON.stringify(true)');
   assert.match(await fb('unlock','1234'),/^unlocked/);
   assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.unlocked))'),true);
   await evaluate('localStorage.pinStyle=JSON.stringify("segmented");localStorage.restored="true";JSON.stringify(true)');
