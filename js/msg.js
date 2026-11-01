@@ -276,16 +276,22 @@
  // What Facebook actually put on screen, so a not-found error names the real
  // stage instead of sending the user to restore in the wrong place. Dialog
  // text and button labels only — never chat content.
+ // Only restore-relevant text and controls belong in this diagnostic: a
+ // chat list's rows also mention end-to-end encryption, and reading a
+ // person's name and message preview back in an error is both noise and
+ // their private content. Rows are excluded by their list container.
+ const RESTORE_ONLY=/restore|secure storage|chat history|\bPIN\b|khôi phục|restaur|sécuris/i;
+ const inChatList=e=>!!e.closest('[role=list],[role=grid],[role=row],[role=log],[role=complementary]');
  const seenRestore=()=>{
   const parts=[];
-  for(const d of document.querySelectorAll('[role=dialog]')){const t=F.clean(d.innerText).slice(0,120);if(t)parts.push('dialog: '+t);}
+  for(const d of document.querySelectorAll('[role=dialog]')){const t=F.clean(d.innerText).slice(0,160);if(t&&RESTORE_ONLY.test(t))parts.push('dialog: '+t);}
   const inDlg=[...document.querySelectorAll('[role=dialog] button,[role=dialog] [role=button],[role=dialog] a[href],[role=dialog] [role=link]')].filter(b=>F.visible(b)).map(label).filter(Boolean);
-  const btns=[...inDlg,...[...document.querySelectorAll('button,[role=button],a[href],[role=link]')].filter(b=>F.visible(b)).map(label).filter(Boolean)].slice(0,30);
-  if(btns.length)parts.push('buttons: '+btns.join(' | '));
+  const btns=[...inDlg,...[...document.querySelectorAll('button,[role=button],a[href],[role=link]')].filter(b=>F.visible(b)&&!inChatList(b)).map(label).filter(t=>t&&RESTORE_ONLY.test(t))].slice(0,10);
+  if(btns.length)parts.push('restore controls: '+btns.join(' | '));
   const hints=new Set();
-  for(const e of document.querySelectorAll('div,span,a,p')){if(hints.size>=6)break;if(!F.visible(e)||e.children.length>3)continue;const t=F.clean(e.innerText||'');if(t&&t.length<=160&&/restore|secure storage|chat history|end-to-end/i.test(t))hints.add(e.tagName.toLowerCase()+': '+t.slice(0,120));}
+  for(const e of document.querySelectorAll('div,span,a,p')){if(hints.size>=3)break;if(!F.visible(e)||e.children.length>3||inChatList(e))continue;const t=F.clean(e.innerText||'');if(t&&t.length<=160&&RESTORE_ONLY.test(t))hints.add(e.tagName.toLowerCase()+': '+t.slice(0,120));}
   if(hints.size)parts.push('restore text: '+[...hints].join(' | '));
-  return parts.length?(' On screen: '+parts.join(' ;; ').slice(0,900)):'';
+  return parts.length?(' On screen: '+parts.join(' ;; ').slice(0,500)):'';
  };
  F.pinFocus=async(budget)=>{
   const pressed=new WeakSet();
@@ -322,7 +328,11 @@
    }
    await F.sleep(200);
   }
-  return 'PIN restore dialog not found; open Messenger history restoration with `fb page`.'+seenRestore();
+  // No prompt was found in either walk. Say what that means, because on a
+  // profile that once answered "Don't restore messages" Facebook keeps that
+  // answer and never offers the prompt again here — retrying unlock there can
+  // never succeed.
+  return 'PIN restore prompt not found. If "Don\'t restore messages" was chosen on this browser profile before, Facebook remembers it and will not offer the prompt again here: chats this profile already restored still read, but history missing from it cannot be restored from this profile. Otherwise the restore UI changed — inspect it with `fb page`.'+seenRestore();
  };
  F.pinDone=async(budget)=>{
   // Typing alone does not submit every surface: some wait for a Continue /
