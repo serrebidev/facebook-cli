@@ -284,7 +284,7 @@ impl FeedBuf {
                         // wake below is Rust-side and still fires; stepping
                         // unfreezes first, so a refill is never slowed.
                         if !frozen {
-                            b.set_lifecycle(&t, true).await;
+                            b.set_lifecycle(&t, true).await?;
                             frozen = true;
                         }
                         let _ = tokio::time::timeout(Duration::from_secs(30), notified).await;
@@ -293,7 +293,7 @@ impl FeedBuf {
                     }
                 }
                 if frozen {
-                    b.set_lifecycle(&t, false).await;
+                    b.set_lifecycle(&t, false).await?;
                     frozen = false;
                 }
                 let posts: Vec<_> = bounded(45, step(b, &t))
@@ -490,5 +490,152 @@ mod tests {
         assert!(!seen.fresh(&sale));
         assert!(seen.fresh(&sale), "a third copy after the reload is new");
         assert!(seen.fresh(&post("Shop", "Other", "")));
+    }
+
+    /// Fake Chrome that serves one 60-post feed batch per tab and withholds
+    /// the reply to one kind of lifecycle request. Returns the log of
+    /// `method:detail` calls it saw.
+    async fn feed_chrome_withholding(
+        io: tokio::io::DuplexStream,
+        withheld_state: &'static str,
+    ) -> Arc<std::sync::Mutex<Vec<String>>> {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message;
+        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = log.clone();
+        tokio::spawn(async move {
+            let mut ws = tokio_tungstenite::accept_async(io).await.unwrap();
+            let (mut created, mut batch_sent) = (0, false);
+            while let Some(Ok(Message::Text(text))) = ws.next().await {
+                let req: Value = serde_json::from_str(text.as_str()).unwrap();
+                let method = req["method"].as_str().unwrap();
+                let result = match method {
+                    "Target.createTarget" => {
+                        created += 1;
+                        batch_sent = false;
+                        serde_json::json!({"targetId": format!("T{created}")})
+                    }
+                    "Target.attachToTarget" => serde_json::json!({"sessionId": "S"}),
+                    "Page.setWebLifecycleState" => {
+                        let state = req["params"]["state"].as_str().unwrap();
+                        seen.lock().unwrap().push(format!("{method}:{state}"));
+                        if state == withheld_state {
+                            continue;
+                        }
+                        serde_json::json!({})
+                    }
+                    "Target.closeTarget" => {
+                        let target = req["params"]["targetId"].as_str().unwrap();
+                        seen.lock().unwrap().push(format!("{method}:{target}"));
+                        serde_json::json!({})
+                    }
+                    "Runtime.evaluate" => {
+                        let expr = req["params"]["expression"].as_str().unwrap();
+                        let value = match expr {
+                            "!!document.querySelector('[role=main]')" => serde_json::json!(true),
+                            "window.__fbFeed.step()" if !batch_sent => {
+                                batch_sent = true;
+                                Value::Array(
+                                    (0..AHEAD)
+                                        .map(|n| {
+                                            serde_json::json!({
+                                                "author": "A", "text": format!("post {n}"),
+                                                "url": format!("/a/posts/{n}"), "time": "now",
+                                            })
+                                        })
+                                        .collect(),
+                                )
+                            }
+                            "window.__fbFeed.step()" => serde_json::json!([]),
+                            _ => serde_json::json!(false),
+                        };
+                        serde_json::json!({"result": {"value": value}})
+                    }
+                    _ => serde_json::json!({}),
+                };
+                let reply = serde_json::json!({"id": req["id"], "result": result});
+                ws.send(Message::text(reply.to_string())).await.unwrap();
+            }
+        });
+        log
+    }
+
+    async fn settle() {
+        for _ in 0..40 {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    /// Chrome keeps the connection open but never answers one lifecycle
+    /// request: the pump must give the tab up, so `--refresh` gets a new one.
+    async fn refresh_recovers_when_chrome_ignores(stuck_state: &'static str) {
+        let (client_io, server_io) = tokio::io::duplex(1 << 20);
+        let log = feed_chrome_withholding(server_io, stuck_state).await;
+        let cdp = crate::cdp::Cdp::connect(client_io, "ws://fixture.local/")
+            .await
+            .unwrap();
+        let browser = Browser::new(cdp.clone());
+        let buf = Arc::new(FeedBuf::default());
+        buf.start(&browser, false).await;
+        for _ in 0..100 {
+            settle().await;
+            if buf.inner.lock().await.posts.len() >= AHEAD {
+                break;
+            }
+            tokio::time::advance(Duration::from_millis(50)).await;
+        }
+        assert_eq!(buf.inner.lock().await.posts.len(), AHEAD);
+        for _ in 0..100 {
+            settle().await;
+            if log
+                .lock()
+                .unwrap()
+                .contains(&"Page.setWebLifecycleState:frozen".to_string())
+            {
+                break;
+            }
+            tokio::time::advance(Duration::from_millis(50)).await;
+        }
+        assert!(
+            log.lock()
+                .unwrap()
+                .contains(&"Page.setWebLifecycleState:frozen".to_string()),
+            "the parked pump must reach the freeze request"
+        );
+        if stuck_state == "active" {
+            // let the reader take a post so the parked pump has to thaw
+            assert_eq!(buf.take(1).await.unwrap().len(), 1);
+        }
+        for _ in 0..60 {
+            tokio::time::advance(Duration::from_secs(1)).await;
+            settle().await;
+        }
+        assert!(
+            !buf.inner.lock().await.running,
+            "pump must end after the unanswered {stuck_state} request"
+        );
+        assert!(
+            log.lock()
+                .unwrap()
+                .contains(&"Target.closeTarget:T1".to_string()),
+            "the tab with unknown lifecycle state must be closed"
+        );
+        buf.start(&browser, true).await;
+        for _ in 0..30 {
+            tokio::time::advance(Duration::from_secs(1)).await;
+            settle().await;
+        }
+        assert_eq!(buf.inner.lock().await.posts.len(), AHEAD);
+        cdp.close();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn refresh_recovers_when_chrome_ignores_the_freeze() {
+        refresh_recovers_when_chrome_ignores("frozen").await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn refresh_recovers_when_chrome_ignores_the_thaw() {
+        refresh_recovers_when_chrome_ignores("active").await;
     }
 }

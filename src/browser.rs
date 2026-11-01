@@ -116,6 +116,7 @@ pub struct Browser {
 }
 
 const MAX_IDLE: usize = 6;
+const LIFECYCLE_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl Browser {
     pub async fn init(cdp: Arc<Cdp>, _requested_visible: bool) -> Arc<Browser> {
@@ -577,17 +578,23 @@ impl Browser {
     }
 
     /// Freeze or unfreeze a tab's page: a frozen page runs no timers and
-    /// renders nothing, so a parked background tab costs no CPU. Best
-    /// effort — a browser that refuses leaves the page exactly as it was.
-    pub async fn set_lifecycle(&self, t: &Tab, frozen: bool) {
-        let _ = self
-            .cdp
-            .call(
+    /// renders nothing, so a parked background tab costs no CPU. A browser
+    /// that answers with an error leaves the page as it was and is ignored,
+    /// but one that never answers is an `Err`: the caller must retire the
+    /// tab, since its state is unknown.
+    pub async fn set_lifecycle(&self, t: &Tab, frozen: bool) -> Res<()> {
+        let state = if frozen { "frozen" } else { "active" };
+        tokio::time::timeout(
+            LIFECYCLE_TIMEOUT,
+            self.cdp.call(
                 Some(&t.session),
                 "Page.setWebLifecycleState",
-                json!({"state": if frozen { "frozen" } else { "active" }}),
-            )
-            .await;
+                json!({"state": state}),
+            ),
+        )
+        .await
+        .map(drop)
+        .map_err(|_| format!("page did not answer the {state} lifecycle request"))
     }
 
     pub async fn key(&self, t: &Tab, key: &str, code: &str, vk: u32, modifiers: u32) -> Res<()> {
