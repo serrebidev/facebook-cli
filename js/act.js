@@ -55,6 +55,16 @@
   const current=await waitFor(()=>{const b=audienceButton();return b&&AUD[kind].test(first(b.innerText))},3000);
   return current?true:'audience change not confirmed; nothing was posted';
  };
+ const FRIEND_ADD=/^(Add friend|Thêm bạn bè|Ajouter un ami|Ajouter)$/i;
+ const FRIEND_SENT=/^(Friend request sent|Cancel request|Đã gửi lời mời kết bạn|Demande envoyée|Annuler la demande)$/i;
+ const FRIEND_IS=/^(Friends|Bạn bè|Amis)$/i;
+ // Only controls in the profile header (above the tab strip, outside feed/list/article/dialog regions) belong to the requested profile; recommendations and feed cards live elsewhere.
+ const friendControls=()=>{const m=main();const tl=m&&m.querySelector('[role=tablist]');if(!tl)return [];return [...m.querySelectorAll('[role=button]')].filter(x=>!x.closest('[role=tablist],[role=feed],[role=list],[role=article],[role=dialog]')&&(tl.compareDocumentPosition(x)&Node.DOCUMENT_POSITION_PRECEDING)&&F.visible(x)).filter(x=>{const t=btnText(x).split('\n')[0].trim();return FRIEND_ADD.test(t)||FRIEND_SENT.test(t)||FRIEND_IS.test(t);});};
+ const friendButton=()=>{const bs=friendControls();return bs.length===1?bs[0]:null;};
+ F.friendState=()=>{const bs=friendControls();if(!bs.length)return 'no-button';if(bs.length>1)return 'ambiguous';const t=btnText(bs[0]).split('\n')[0].trim();if(FRIEND_IS.test(t))return 'friends';if(FRIEND_SENT.test(t))return 'requested';if(!F.enabled(bs[0]))return 'no-button';return 'can-add';};
+ // The profile header mounts after DOMContentLoaded: wait for the tab strip, then for the relationship control, before concluding there is none.
+ F.friendWait=async()=>{const m=await waitFor(()=>{const m=main();return m&&m.querySelector('[role=tablist]')&&m},15000);if(!m)return 'no-profile';const st=await waitFor(()=>{const s=F.friendState();return s!=='no-button'?s:null},5000,200);return st||'no-button';};
+ F.friendAdd=async()=>{const st=F.friendState();if(st!=='can-add')return st;const b=friendButton();if(!b)return 'no-button';b.click();const ok=await waitFor(()=>{const s=F.friendState();return s==='requested'||s==='friends'?s:null;},8000,200);return ok||'unconfirmed';};
  const postButton=()=>{const d=F.composeDialog();const bs=d?[...d.querySelectorAll('[role=button]')].filter(b=>F.visible(b)&&/^(Post|Đăng|Publier)$/i.test(clean(b.getAttribute('aria-label')||btnText(b)))):[];return bs.length===1?bs[0]:null;};
  // Retained audience panes can put Done after Post; order is not action identity.
  F.composePrepare=async()=>{

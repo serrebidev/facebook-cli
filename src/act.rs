@@ -302,6 +302,68 @@ pub async fn delete(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
     b.release(t).await;
     r
 }
+/// Send a friend request from a profile page. Idempotent: an existing
+/// friendship or a pending request is reported, not re-clicked.
+pub async fn friend_add(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
+    let a = parse(args, &[], &[])?;
+    let spec = a
+        .pos
+        .first()
+        .ok_or("usage: friend-add <ref|url|@handle|id>")?;
+    let b: Arc<Browser> = d.browser(out).await?;
+    let gen0 = b.generation.load(std::sync::atomic::Ordering::SeqCst);
+    // mutations hold the shared side of the account lock; an account import takes the exclusive side
+    let _account = d.account.read().await;
+    if b.generation.load(std::sync::atomic::Ordering::SeqCst) != gen0 {
+        return Err(
+            "the account changed while this command waited; nothing was done, try again".into(),
+        );
+    }
+    // a plain name is never searched: the first hit may be a different person
+    let p = crate::ops::profile_path_explicit(d, &b, spec).await?;
+    let t = b.acquire().await?;
+    same_account(&b, gen0)?;
+    let text_of = |v: &Value| -> Res<String> {
+        match v {
+            Value::String(s) => Ok(s.clone()),
+            other => Err(format!("unexpected friend button state: {other}")),
+        }
+    };
+    let r = async {
+        b.goto(&t, &format!("https://www.facebook.com{p}")).await?;
+        let state = text_of(&b.eval(&t, "window.__fb.friendWait()").await?)?;
+        match state.as_str() {
+            "friends" => {
+                out.line("already friends");
+                return Ok(());
+            }
+            "requested" => {
+                out.line("friend request already sent");
+                return Ok(());
+            }
+            "can-add" => {}
+            "ambiguous" => {
+                return Err("several friend controls on this page; nothing was clicked".into());
+            }
+            _ => return Err("no Add friend button on this profile".into()),
+        }
+        same_account(&b, gen0)?;
+        if out.cancelled() {
+            return Err("cancelled by client; no request was sent".into());
+        }
+        let after = text_of(&b.eval(&t, "window.__fb.friendAdd()").await?)?;
+        match after.as_str() {
+            "requested" | "friends" => {
+                out.line("friend request sent");
+                Ok(())
+            }
+            other => Err(format!("friend request not confirmed (state: {other})")),
+        }
+    }
+    .await;
+    b.release(t).await;
+    r
+}
 
 pub async fn comment(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
     let a = parse(args, &[], &[])?;

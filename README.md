@@ -91,6 +91,7 @@ Run `fb help` for the exact list. `<who>` is `me`, a name, `@vanity`, an id, a U
 | `comment <post> <text>` | |
 | `react <post> [like\|love\|care\|haha\|wow\|sad\|angry\|none]` | idempotent |
 | `delete <post>` | your own posts |
+| `friend-add <ref\|url\|@handle\|id>` | idempotent; reports existing friends or a pending request; plain names are refused (search first, use the ref) |
 
 | Other | |
 |---|---|
