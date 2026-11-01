@@ -228,6 +228,172 @@ console.log('js removed-newest ok');
   console.log('js post view comment refs ok');
 })().catch(e => { console.error(e); process.exit(1); });
 
+// message actions: msgTarget readiness and msgReact's receipt, against stub Messenger logs
+(async () => {
+  const vm = require('vm');
+  const setup = rows => {
+    const log = { querySelectorAll: () => rows, contains: e => e === log };
+    const document = { body: { scrollHeight: 0 }, querySelector: q => (q === '[role=log]' ? log : null), querySelectorAll: () => [] };
+    const ctx = vm.createContext({ window: { scrollTo() {} }, document, location: { href: 'https://www.facebook.com/messages/t/1' }, URL, setTimeout });
+    vm.runInContext(src, ctx);
+    const G = ctx.window.__fb;
+    Object.assign(G, {
+      sleep: async () => {},
+      waitFor: async f => { for (let i = 0; i < 3; i++) { const v = await f(); if (v) return v; } return null; },
+      press: e => e.onpress && e.onpress(),
+    });
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '../js/msg.js'), 'utf8'), ctx);
+    G.parseMessage = a => a.parsed;
+    return { G, document };
+  };
+  const row = parsed => ({ parsed: { id: '', t: '', sender: '', text: '', att: '', re: '', ...parsed }, isConnected: true, querySelector: q => (q === '[aria-label]' ? {} : null) });
+  const older = row({ id: 'm1', t: '10:00', sender: 'You', text: 'older loaded message' });
+
+  // a newest row that only shows a toolbar label has no readable message yet: never fall back to the older one
+  {
+    const { G } = setup([older, row({ id: 'm2' })]);
+    assert.strictEqual((await G.msgTarget('')).err, 'messages are still loading; try again');
+  }
+  // once the rows are readable the newest (or the newest match) is chosen
+  {
+    const newest = row({ id: 'm3', t: '10:02', sender: 'Bob', text: 'newest' });
+    const { G } = setup([older, newest]);
+    const t = await G.msgTarget('');
+    assert.strictEqual(t.a, newest);
+    assert.strictEqual(t.m.text, 'newest');
+    const found = await setup([older, newest]).G.msgTarget('older');
+    assert.strictEqual(found.a, older);
+  }
+
+  // msgReact: a newer message with identical sender and text must not be what the receipt checks
+  const dup = parsed => row({ t: '10:00', sender: 'You', text: 'same text', ...parsed });
+  const react = async (rows, mutate, name = 'love', emoji = '❤️', between = () => {}) => {
+    const { G, document } = setup(rows);
+    const target = rows[0];
+    G.msgTarget = async () => ({ a: target, m: { ...target.parsed } });
+    G.msgToolbarBtn = async () => ({ onpress() {} });
+    const emojiBtn = { textContent: emoji, getAttribute: () => '', onpress: () => mutate(rows) };
+    const toned = { textContent: emoji + '🏻', getAttribute: () => '', onpress: () => { throw new Error('wrong variant'); } };
+    const picker = { getBoundingClientRect: () => ({ width: 10 }), querySelector: () => null, querySelectorAll: () => [toned, emojiBtn] };
+    document.querySelectorAll = () => [picker];
+    const opened = await G.msgReactOpen('', name);
+    if (opened !== true) return opened;
+    between(rows);
+    return G.msgReactConfirm();
+  };
+  {
+    const m1 = dup({ id: 'm1' }), m2 = dup({ id: 'm2' });
+    const rows = [m1];
+    const r = await react(rows, rs => { rs.push(m2); m1.parsed.re = '❤️'; });
+    assert.strictEqual(r.text, 'reacted ❤️ to You: same text');
+  }
+  // the reaction landed on the newer duplicate only: ours stayed bare
+  {
+    const rows2 = [dup({ id: 'm1' })];
+    const r2 = await react(rows2, rs => { const n = dup({ id: 'm2', re: '❤️' }); rs.push(n); });
+    assert.strictEqual(r2, 'the reaction did not land on the message');
+  }
+  // skin-tone variants are other emoji: 👍🏻 already there, our 👍 added
+  {
+    const r = await react([dup({ id: 'm1', re: '👍🏻' })], rs => { rs[0].parsed.re = '👍🏻👍'; }, 'like', '👍');
+    assert.strictEqual(r.text, 'reacted 👍 to You: same text');
+  }
+  // the baseline is read right before the click: others reacting while the picker is open do not count as ours
+  {
+    const r = await react([dup({ id: 'm1', re: '❤️' })], rs => { rs[0].parsed.re = '❤️2'; }, 'love', '❤️', rs => { rs[0].parsed.re = '❤️3'; });
+    assert.strictEqual(r, 'the reaction did not land on the message');
+  }
+  // the message unmounted while the picker was open: no click, no false baseline
+  {
+    let clicks = 0;
+    const r = await react([dup({ id: 'm1', re: '❤️2' })], () => { clicks++; }, 'love', '❤️', rs => rs.splice(0, 1));
+    assert.strictEqual(r, 'the message is no longer on screen; nothing was changed');
+    assert.strictEqual(clicks, 0);
+  }
+  // a picker offering only a skin-tone variant has no button for our emoji: nothing is clicked
+  {
+    const { G, document } = setup([dup({ id: 'm1' })]);
+    G.msgTarget = async () => ({ a: dup({ id: 'm1' }), m: dup({ id: 'm1' }).parsed });
+    G.msgToolbarBtn = async () => ({ onpress() {} });
+    const toned = { textContent: '👍🏻', getAttribute: () => '', onpress: () => { throw new Error('wrong variant'); } };
+    document.querySelectorAll = () => [{ getBoundingClientRect: () => ({ width: 10 }), querySelector: () => null, querySelectorAll: () => [toned] }];
+    assert.strictEqual(await G.msgReactOpen('', 'like'), 'the reaction picker did not open');
+  }
+  // a skin-tone button whose label says "like" does not stand in for the neutral emoji button
+  {
+    const { G, document } = setup([dup({ id: 'm1' })]);
+    G.msgTarget = async () => ({ a: dup({ id: 'm1' }), m: dup({ id: 'm1' }).parsed });
+    G.msgToolbarBtn = async () => ({ onpress() {} });
+    let pressed = '';
+    const btn = (text, label) => ({ textContent: text, getAttribute: () => label, onpress: () => { pressed = text; } });
+    document.querySelectorAll = () => [{ getBoundingClientRect: () => ({ width: 10 }), querySelector: () => null, querySelectorAll: () => [btn('👍🏻', 'Like'), btn('👍', 'Like')] }];
+    assert.strictEqual(await G.msgReactOpen('', 'like'), true);
+    await G.msgReactConfirm().catch(() => {});
+    assert.strictEqual(pressed, '👍');
+  }
+  // opening the picker applies nothing: only the confirm step clicks the emoji
+  {
+    let clicks = 0;
+    const rows = [dup({ id: 'm1' })];
+    await react(rows, () => { clicks++; });
+    assert.strictEqual(clicks, 1, 'confirm clicks once');
+    const { G } = setup(rows);
+    assert.strictEqual(await G.msgReactConfirm(), 'no reaction picker is open');
+  }
+  // without ids the selected row itself is checked while it is still mounted
+  {
+    const rows = [dup({})];
+    const r = await react(rows, rs => { rs.push(dup({})); rs[0].parsed.re = '❤️'; });
+    assert.strictEqual(r.text, 'reacted ❤️ to You: same text');
+  }
+  // without ids and with the row gone, a newer identical message is never taken for it
+  {
+    const rows = [dup({})];
+    const r = await react(rows, rs => { rs[0].isConnected = false; rs.splice(0, 1, dup({ re: '❤️' })); });
+    assert.strictEqual(r, 'the reaction did not land on the message');
+  }
+  // someone else's identical emoji does not confirm ours: the reactions must change
+  {
+    const rows = [dup({ id: 'm1', re: '❤️' })];
+    assert.strictEqual(await react(rows, () => {}), 'the reaction did not land on the message');
+    const r = await react([dup({ id: 'm1', re: '❤️' })], rs => { rs[0].parsed.re = '❤️2'; });
+    assert.strictEqual(r.text, 'reacted ❤️ to You: same text');
+    // an unrelated reaction or our own removal (❤️2 -> ❤️) is not a landed reaction either
+    assert.strictEqual(await react([dup({ id: 'm1', re: '❤️' })], rs => { rs[0].parsed.re = '❤️👍'; }), 'the reaction did not land on the message');
+    assert.strictEqual(await react([dup({ id: 'm1', re: '❤️2' })], rs => { rs[0].parsed.re = '❤️'; }), 'the reaction did not land on the message');
+  }
+  // an image that mounted before its message label is not a readable row yet
+  {
+    const { G } = setup([older, row({ id: 'm8', att: 'img' })]);
+    assert.strictEqual((await G.msgTarget('older')).err, 'messages are still loading; try again');
+  }
+  // a newest voice message (readable row, no text) is not skipped for an older text message
+  {
+    const voice = row({ id: 'm9', t: '10:05', sender: 'Bob' });
+    const { G } = setup([older, voice]);
+    assert.strictEqual((await G.msgTarget('')).err, 'the newest message has no readable text; nothing was changed');
+    assert.strictEqual((await setup([older, voice]).G.msgTarget('older')).a, older);
+  }
+  // msgReplyOpen: only a quote that appears after the Reply click confirms it
+  {
+    const { G, document } = setup([older]);
+    G.msgTarget = async () => ({ a: older, m: older.parsed });
+    const el = (text, wraps) => ({ children: [], textContent: text, contains: () => wraps, getBoundingClientRect: () => ({ width: 5 }) });
+    const reply = async (before, after) => {
+      let clicked = false;
+      G.msgToolbarBtn = async () => ({ onpress() { clicked = true; } });
+      document.querySelectorAll = () => (clicked ? [...before, ...after] : before);
+      return G.msgReplyOpen('');
+    };
+    const none = 'the reply quote did not appear above the message box';
+    const preview = el('replying to the plan', false);
+    // a wrapper around the log, or a sidebar preview that was already there, is not the composer quote
+    assert.strictEqual(await reply([], [el('replying to the plan', true)]), none);
+    assert.strictEqual(await reply([preview], []), none);
+    assert.strictEqual((await reply([preview], [el('You are replying to: older loaded message', false)])).text, 'replying to You: older loaded message');
+  }
+  console.log('js message actions ok');
+})().catch(e => { console.error(e); process.exit(1); });
 // members: profile links go through profilePath, and details that render after the name are merged in
 (async () => {
   const vm = require('vm');

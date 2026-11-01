@@ -11,7 +11,7 @@ fn command_limit(argv: &[String], base: u64) -> u64 {
         // login waits for a human (Allow click, checkbox, 2FA): it has its own, longer limits
         Some("login") => 1200,
         Some("unlock") => base.saturating_add(UNLOCK_EXTRA_SECS),
-        Some("send") => {
+        Some("send" | "reply") => {
             // every attachment is uploaded and confirmed on its own (up to 120s each)
             let files = argv
                 .iter()
@@ -97,6 +97,8 @@ async fn run_inner(d: &Daemon, argv: &[String], _cwd: &str, out: &Out) -> Res<()
         "react" => crate::act::react(d, &argv[1..], out).await,
         "friend-add" => crate::act::friend_add(d, &argv[1..], out).await,
         "unsend" => crate::messenger::unsend(d, &argv[1..], out).await,
+        "msgreact" => crate::messenger::msgreact(d, &argv[1..], out).await,
+        "reply" => crate::messenger::reply(d, &argv[1..], _cwd, out).await,
         "unlock" => crate::messenger::unlock(d, &argv[1..], out).await,
         "feed" => crate::feed::feed(d, &argv[1..], out).await,
         "posts" => crate::feed::posts(d, &argv[1..], out).await,
