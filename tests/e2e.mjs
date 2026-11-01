@@ -756,8 +756,11 @@ try{
  });
  await check('message react and reply work through the message toolbar',async()=>{
   await evaluate('localStorage.restored="true";JSON.stringify(true)');
-  assert.match(await fb('msgreact','42','love','--match','fixture send en'),/^reacted/);
+  assert.match(await fb('send','42','react target message'),/^sent/);
+  assert.match(await fb('msgreact','42','love','--match','react target message'),/^reacted/);
   assert.match(await fb('read','42','-n','6'),/❤️/);
+  await assert.rejects(()=>fb('reply','42','sent without selector'),/usage: reply/);
+  assert.doesNotMatch(await fb('read','42','-n','6'),/sent without selector/);
   assert.match(await fb('reply','42','fixture reply text','--match','Earlier message'),/^replied/);
   assert.match(await fb('read','42','-n','6'),/fixture reply text/);
   assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.lastReplyTo))'),'Earlier message');

@@ -707,6 +707,21 @@ async fn submit(
     Ok(())
 }
 
+/// `reply` is `send` that must quote a message: without a selector it would
+/// silently become an ordinary send, so refuse before any browser work.
+fn require_reply_selector(args: &[String]) -> Res<()> {
+    let a = crate::ops::parse(args, &["file", "img", "match"], &["dry", "fuzzy"])?;
+    if a.opt("match").is_none_or(|m| m.trim().is_empty()) {
+        return Err("usage: reply <chat> <text> --match text [--file path]...".into());
+    }
+    Ok(())
+}
+
+pub async fn reply(d: &Daemon, args: &[String], cwd: &str, out: &Out) -> Res<()> {
+    require_reply_selector(args)?;
+    send(d, args, cwd, out).await
+}
+
 pub async fn send(d: &Daemon, args: &[String], cwd: &str, out: &Out) -> Res<()> {
     let a = crate::ops::parse(args, &["file", "img", "match"], &["dry", "fuzzy"])?;
     let dry = a.flag("dry");
@@ -758,6 +773,7 @@ pub async fn send(d: &Daemon, args: &[String], cwd: &str, out: &Out) -> Res<()> 
         }
         // `fb reply` is send with --match: quote the matched message above
         // the composer first; everything after is the ordinary send path.
+        // The quote rides on the first message submitted (a file, if any).
         let mut replied = String::new();
         if let Some(m) = a.opt("match") {
             let info = b
@@ -986,19 +1002,24 @@ pub async fn unlock(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
         match b.eval(&t, "window.__fb.pinDone(240000)").await? {
             Value::Bool(true) => {
                 out.line("unlocked");
-                Ok(())
+                Ok(false)
             }
             Value::String(s) if s == "VERIFYING" => {
                 out.line("PIN accepted; Facebook is still restoring your chat history — it finishes in the background as long as the browser stays open");
-                Ok(())
+                Ok(true)
             }
             Value::String(s) => Err(s),
             _ => Err("unexpected".into()),
         }
     }
     .await;
-    b.release(t).await;
-    r
+    // the restore runs inside this page: keep a still-verifying one awake
+    if r == Ok(true) {
+        b.park_busy(t).await;
+    } else {
+        b.release(t).await;
+    }
+    r.map(|_| ())
 }
 
 /// Remove (for everyone) your most recent message in a chat, optionally the latest one containing `--match`.
@@ -1074,9 +1095,8 @@ pub async fn msgreact(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
         Some((s, rest)) if rest.len() == 1 => (s.as_str(), rest[0].as_str()),
         _ => {
             return Err(
-                "usage: msgreact <chat> <like|love|care|haha|wow|sad|angry> [--match text]"
-                    .into(),
-            )
+                "usage: msgreact <chat> <like|love|care|haha|wow|sad|angry> [--match text]".into(),
+            );
         }
     };
     if !matches!(
@@ -1104,16 +1124,21 @@ pub async fn msgreact(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
     let r = async {
         open_thread(&b, &t, &target.path).await?;
         let m = a.opt("match").unwrap_or("");
-        let info = b
+        // find the message and open its picker first; the click that applies
+        // the reaction is the one step a cancelled client must still stop
+        let open = b
             .eval(
                 &t,
-                &format!(
-                    "window.__fb.msgReact({}, {})",
-                    json!(m),
-                    json!(reaction)
-                ),
+                &format!("window.__fb.msgReactOpen({}, {})", json!(m), json!(reaction)),
             )
             .await?;
+        if let Value::String(e) = &open {
+            return Err(e.clone());
+        }
+        if out.cancelled() {
+            return Err("cancelled by client; nothing was reacted".into());
+        }
+        let info = b.eval(&t, "window.__fb.msgReactConfirm()").await?;
         let text = match &info {
             Value::String(e) => return Err(e.clone()),
             v => v["text"].as_str().unwrap_or("").to_string(),
@@ -1318,6 +1343,24 @@ mod tests {
             ("A B C", "x y")
         );
         assert!(back.list[0].unread && !back.list[0].group && back.list[1].e2ee());
+    }
+
+    #[test]
+    fn reply_needs_a_nonblank_match_selector() {
+        let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let usage = "usage: reply <chat> <text> --match text [--file path]...";
+        assert_eq!(
+            require_reply_selector(&args(&["42", "answer"])),
+            Err(usage.into())
+        );
+        assert_eq!(
+            require_reply_selector(&args(&["42", "answer", "--match", "  "])),
+            Err(usage.into())
+        );
+        assert_eq!(
+            require_reply_selector(&args(&["42", "answer", "--match=lunch"])),
+            Ok(())
+        );
     }
 
     #[test]

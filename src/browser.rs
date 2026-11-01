@@ -112,6 +112,8 @@ pub struct Browser {
     /// this browser was launched with a visible window (`login --visible`)
     pub visible: std::sync::atomic::AtomicBool,
     idle: Mutex<Vec<Tab>>,
+    /// see `park_busy`
+    busy: Mutex<Option<Tab>>,
     owned: Mutex<HashMap<String, Option<String>>>,
 }
 
@@ -183,6 +185,7 @@ impl Browser {
             generation: Default::default(),
             visible: Default::default(),
             idle: Mutex::new(Vec::new()),
+            busy: Mutex::new(None),
             owned: Mutex::new(HashMap::new()),
         })
     }
@@ -214,16 +217,17 @@ impl Browser {
             t.armed = true;
             // pooled tabs are frozen (see release_as): wake this one before
             // probing, or the probe itself would stall on a frozen page
-            self.set_lifecycle(&t, false).await;
-            let alive = self
-                .cdp
-                .call(
-                    Some(&t.session),
-                    "Runtime.evaluate",
-                    json!({"expression":"1"}),
-                )
-                .await
-                .is_ok();
+            let thawed = self.set_lifecycle(&t, false).await.is_ok();
+            let alive = thawed
+                && self
+                    .cdp
+                    .call(
+                        Some(&t.session),
+                        "Runtime.evaluate",
+                        json!({"expression":"1"}),
+                    )
+                    .await
+                    .is_ok();
             // a tab pooled before an account change shows the old account: drop it, never restamp it
             let current = t.gen_at == self.generation.load(std::sync::atomic::Ordering::SeqCst);
             if alive && current {
@@ -415,7 +419,8 @@ impl Browser {
     pub async fn close_idle(&self) {
         self.generation
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let tabs: Vec<Tab> = std::mem::take(&mut *self.idle.lock().await);
+        let mut tabs: Vec<Tab> = std::mem::take(&mut *self.idle.lock().await);
+        tabs.extend(self.busy.lock().await.take());
         for t in tabs {
             self.close(t).await;
         }
@@ -430,34 +435,64 @@ impl Browser {
     }
 
     pub async fn release_as(&self, mut t: Tab, kind: &str) {
-        t.armed = false;
-        t.permit = None;
-        // the account changed while this tab was in use: its page belongs to the previous login
-        if t.gen_at != self.generation.load(std::sync::atomic::Ordering::SeqCst) {
+        // stays armed, and keeps its slot, until the tab is in the pool: a
+        // release cancelled while it awaits Chrome or the lock closes the tab
+        // instead of leaking it. A tab from before an account change shows the previous login.
+        if self.stale(&t) {
             self.close(t).await;
             return;
         }
         t.kind = kind.to_string();
-        let idle = self.idle.lock().await;
-        if idle.len() < MAX_IDLE {
-            // Freeze the parked page: Facebook tabs run heavy timers, and
-            // the browser is launched with background throttling disabled,
-            // so an unfrozen pooled tab burns CPU the whole time it waits.
-            // acquire_kind unfreezes before use; a frozen tab that Chrome
-            // discards meanwhile is caught by the probe there.
-            drop(idle);
-            self.set_lifecycle(&t, true).await;
-            let mut idle = self.idle.lock().await;
-            if idle.len() < MAX_IDLE {
-                idle.push(t);
-                return;
-            }
-            drop(idle);
+        if self.idle.lock().await.len() >= MAX_IDLE {
             self.close(t).await;
+            return;
+        }
+        // Freeze the parked page: Facebook tabs run heavy timers, and
+        // the browser is launched with background throttling disabled,
+        // so an unfrozen pooled tab burns CPU the whole time it waits.
+        // acquire_kind unfreezes before use; a frozen tab that Chrome
+        // discards meanwhile is caught by the probe there.
+        if self.set_lifecycle(&t, true).await.is_err() {
+            self.close(t).await;
+            return;
+        }
+        let mut idle = self.idle.lock().await;
+        // close_idle bumps the generation before it drains the pool, so a
+        // tab that passes this check under the lock is still found by it
+        if idle.len() < MAX_IDLE && !self.stale(&t) {
+            t.armed = false;
+            t.permit = None;
+            idle.push(t);
             return;
         }
         drop(idle);
         self.close(t).await;
+    }
+
+    fn stale(&self, t: &Tab) -> bool {
+        t.gen_at != self.generation.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Park a tab whose page is still doing work Facebook started (a PIN
+    /// restore that keeps verifying). It stays active, since a frozen page
+    /// would stop the restore, and out of the pool, since reuse would
+    /// navigate it away. Only one is kept: a newer one replaces it.
+    pub async fn park_busy(&self, mut t: Tab) {
+        t.permit = None;
+        let mut busy = self.busy.lock().await;
+        // close_idle bumps the generation before it takes this slot, so a tab
+        // that passes the check here is still found by it
+        if self.stale(&t) {
+            drop(busy);
+            self.close(t).await;
+            return;
+        }
+        t.armed = false;
+        let old = busy.replace(t);
+        drop(busy);
+        if let Some(old) = old {
+            self.close(old).await;
+        }
     }
 
     pub async fn close(&self, mut t: Tab) {
@@ -676,5 +711,166 @@ impl Browser {
         self.mouse(t, "mouseMoved", x, y, "none", 0).await?;
         self.mouse(t, "mousePressed", x, y, "left", 1).await?;
         self.mouse(t, "mouseReleased", x, y, "left", 1).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex as StdMutex;
+
+    /// Fake Chrome that numbers its targets T1, T2, ... and never answers
+    /// one kind of lifecycle request (and answers the `slow_state` one only
+    /// after 2s). Returns every `method:detail` it saw.
+    async fn chrome_withholding(
+        io: tokio::io::DuplexStream,
+        withheld_state: &'static str,
+        slow_state: &'static str,
+    ) -> Arc<StdMutex<Vec<String>>> {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message;
+        let log = Arc::new(StdMutex::new(Vec::new()));
+        let seen = log.clone();
+        tokio::spawn(async move {
+            let mut ws = tokio_tungstenite::accept_async(io).await.unwrap();
+            let mut created = 0;
+            while let Some(Ok(Message::Text(text))) = ws.next().await {
+                let req: Value = serde_json::from_str(text.as_str()).unwrap();
+                let method = req["method"].as_str().unwrap();
+                let detail = match method {
+                    "Page.setWebLifecycleState" => req["params"]["state"].as_str(),
+                    "Target.closeTarget" => req["params"]["targetId"].as_str(),
+                    _ => None,
+                };
+                if let Some(detail) = detail {
+                    seen.lock().unwrap().push(format!("{method}:{detail}"));
+                }
+                let result = match method {
+                    "Page.setWebLifecycleState" if detail == Some(withheld_state) => continue,
+                    "Page.setWebLifecycleState" if detail == Some(slow_state) => {
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        json!({})
+                    }
+                    "Target.createTarget" => {
+                        created += 1;
+                        json!({"targetId": format!("T{created}")})
+                    }
+                    "Target.attachToTarget" => json!({"sessionId": "S"}),
+                    _ => json!({}),
+                };
+                let reply = json!({"id": req["id"], "result": result});
+                ws.send(Message::text(reply.to_string())).await.unwrap();
+            }
+        });
+        log
+    }
+
+    async fn browser_with(
+        withheld_state: &'static str,
+        slow_state: &'static str,
+    ) -> (Arc<Browser>, Arc<StdMutex<Vec<String>>>) {
+        let (client_io, server_io) = tokio::io::duplex(1 << 20);
+        let log = chrome_withholding(server_io, withheld_state, slow_state).await;
+        let cdp = Cdp::connect(client_io, "ws://fixture.local/")
+            .await
+            .unwrap();
+        (Browser::new(cdp), log)
+    }
+
+    async fn settle() {
+        for _ in 0..40 {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    fn calls(log: &Arc<StdMutex<Vec<String>>>) -> Vec<String> {
+        log.lock().unwrap().clone()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_release_cancelled_during_the_freeze_closes_its_tab() {
+        let (b, log) = browser_with("frozen", "").await;
+        let t = b.acquire().await.unwrap();
+        let cancelled = tokio::time::timeout(Duration::from_secs(1), b.release_as(t, "messages"));
+        assert!(cancelled.await.is_err(), "the freeze request never answers");
+        settle().await;
+        assert_eq!(b.idle_count().await, 0);
+        assert!(calls(&log).contains(&"Target.closeTarget:T1".to_string()));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_tab_that_ignores_the_freeze_is_closed_not_pooled() {
+        let (b, log) = browser_with("frozen", "").await;
+        let t = b.acquire().await.unwrap();
+        b.release_as(t, "messages").await;
+        assert_eq!(b.idle_count().await, 0);
+        assert_eq!(
+            calls(&log),
+            ["Page.setWebLifecycleState:frozen", "Target.closeTarget:T1"]
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_pooled_tab_that_ignores_the_thaw_is_retired_for_a_new_one() {
+        let (b, log) = browser_with("active", "").await;
+        let t = b.acquire().await.unwrap();
+        b.release_as(t, "messages").await;
+        assert_eq!(b.idle_count().await, 1);
+        let again = b.acquire_kind("messages").await.unwrap();
+        assert_eq!(again.target, "T2");
+        assert_eq!(b.idle_count().await, 0);
+        assert!(calls(&log).contains(&"Target.closeTarget:T1".to_string()));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_busy_tab_stays_active_and_is_never_handed_out_again() {
+        let (b, log) = browser_with("", "").await;
+        let t = b.acquire().await.unwrap();
+        b.park_busy(t).await;
+        assert_eq!(b.idle_count().await, 0);
+        assert_eq!(calls(&log), Vec::<String>::new());
+        let next = b.acquire_kind("messages").await.unwrap();
+        assert_eq!(next.target, "T2");
+        // a newer busy tab replaces the older one, which is closed
+        b.park_busy(next).await;
+        assert_eq!(calls(&log), ["Target.closeTarget:T1"]);
+        // an account change closes the busy tab too
+        b.close_idle().await;
+        assert_eq!(
+            calls(&log),
+            ["Target.closeTarget:T1", "Target.closeTarget:T2"]
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_release_keeps_its_slot_until_the_tab_is_pooled() {
+        let (b, _log) = browser_with("", "frozen").await;
+        let free = b.slots.available_permits();
+        let t = b.acquire().await.unwrap();
+        assert_eq!(b.slots.available_permits(), free - 1);
+        let release = tokio::spawn({
+            let b = b.clone();
+            async move { b.release_as(t, "messages").await }
+        });
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert_eq!(b.slots.available_permits(), free - 1, "still freezing");
+        release.await.unwrap();
+        assert_eq!(b.slots.available_permits(), free);
+        assert_eq!(b.idle_count().await, 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_account_change_during_the_freeze_closes_the_releasing_tab() {
+        let (b, log) = browser_with("", "frozen").await;
+        let t = b.acquire().await.unwrap();
+        let release = tokio::spawn({
+            let b = b.clone();
+            async move { b.release_as(t, "messages").await }
+        });
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        b.close_idle().await;
+        release.await.unwrap();
+        assert_eq!(b.idle_count().await, 0);
+        assert!(calls(&log).contains(&"Target.closeTarget:T1".to_string()));
     }
 }

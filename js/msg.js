@@ -463,23 +463,33 @@
  // Find one message in the open thread: the newest whose text contains
  // `match` (any sender), or the newest message at all. Same discipline as
  // unsendOpen: start from the newest rows, never pick among half-rendered
- // ones, never act on a row with no readable text or attachment.
+ // ones. A row counts as rendered only once its message label parses (a
+ // toolbar's own aria-label appears earlier), and a newer row that never
+ // does is an error: falling through would act on an older message.
+ // Returns {a,m} or {err}.
  F.msgTarget=async match=>{
   const log=document.querySelector('[role=log]');
-  if(!log)return null;
+  if(!log)return{err:'no thread'};
   const sc=F.scroller(log);
   if(sc)sc.scrollTop=sc.scrollHeight;else window.scrollTo(0,document.body.scrollHeight);
   await sleep(250);
-  const ready=await waitFor(()=>[...log.querySelectorAll('[role=article]')].slice(-4).every(a=>a.querySelector('[aria-label]')),5000,100);
-  if(!ready)return null;
-  if(!await F.settleBottom(log,3,300))return null;
+  const readable=m=>!!(m.t||m.text);
+  const ready=await waitFor(()=>[...log.querySelectorAll('[role=article]')].slice(-4).every(a=>readable(F.parseMessage(a,log))),5000,100);
+  if(!ready)return{err:'messages are still loading; try again'};
+  if(!await F.settleBottom(log,3,300))return{err:'could not reach the newest messages; nothing was changed'};
   for(const a of [...log.querySelectorAll('[role=article]')].reverse()){
    const m=F.parseMessage(a,log);
+   if(!readable(m))return{err:'a newer message could not be read; nothing was changed'};
    if(match&&!(m.text||'').toLowerCase().includes(match.toLowerCase()))continue;
-   if(!m.text&&!m.att)continue;
+   if(!m.text&&!m.att){
+    // a readable row with no text or attachment (voice message, sticker) can never match; with no
+    // selector it IS the newest message, which we cannot act on: never fall through to an older one
+    if(match)continue;
+    return{err:'the newest message has no readable text; nothing was changed'};
+   }
    return{a,m};
   }
-  return null;
+  return{err:match?'no message contains that text':'no message found in this chat'};
  };
  // Focus a message and find one of its hover toolbar's buttons by label.
  F.msgToolbarBtn=async(a,re)=>{
@@ -493,32 +503,55 @@
   },4000,100);
  };
  const REACT_EMOJI={like:'👍',love:'❤️',care:'🥰',haha:'😆',wow:'😮',sad:'😢',angry:'😡'};
- // React to one message: its toolbar reaction button opens an emoji
- // picker; pick ours and verify it landed on the message.
- F.msgReact=async(match,name)=>{
+ // React to one message in two steps, so the caller can still cancel
+ // between them: Open finds the message and opens its toolbar's emoji
+ // picker, Confirm clicks our emoji and verifies it landed.
+ F.msgReactOpen=async(match,name)=>{
   const emoji=REACT_EMOJI[name];
   if(!emoji)return 'unknown reaction: '+name;
   const t=await F.msgTarget(match);
-  if(!t)return match?'no message contains that text':'no message found in this chat';
+  if(t.err)return t.err;
   const btn=await F.msgToolbarBtn(t.a,/react|emoji|cảm xúc|réagir/i);
   if(!btn)return 'no react button on that message';
   F.press(btn);
   const pick=await waitFor(()=>{
    const pops=[...document.querySelectorAll('[role=dialog],[role=menu]')].filter(e=>e.getBoundingClientRect().width>0&&!e.querySelector('[role=log]'));
    for(const p of pops.reverse()){
-    const b=[...p.querySelectorAll('[role=button],button')].find(e=>(e.textContent||'').includes(emoji)||(e.getAttribute('aria-label')||'').toLowerCase()===name);
+    const bs=[...p.querySelectorAll('[role=button],button')];
+    // exactly our emoji (a skin-tone variant is another one), or a label on a glyph-less button
+    const b=bs.find(e=>(e.textContent||'').trim()===emoji||!(e.textContent||'').trim()&&(e.getAttribute('aria-label')||'').toLowerCase()===name);
     if(b)return b;
    }
    return null;
   },4000,100);
   if(!pick)return 'the reaction picker did not open';
-  F.press(pick);
+  window.__fbReact={t,pick,emoji};
+  return true;
+ };
+ F.msgReactConfirm=async()=>{
+  const r=window.__fbReact;if(!r)return 'no reaction picker is open';
+  window.__fbReact=null;
+  const {t,pick,emoji}=r;
   const log=document.querySelector('[role=log]');
-  // the message row itself may be re-rendered by the reaction: re-find it
-  const ok=await waitFor(()=>{
-   const again=[...log.querySelectorAll('[role=article]')].reverse().find(x=>{const mm=F.parseMessage(x,log);return mm.text===t.m.text&&mm.sender===t.m.sender});
-   return !!again&&F.parseMessage(again,log).re.includes(emoji);
-  },3000,150);
+  // the row may be re-rendered by the reaction: re-find OUR message by id (or the row itself
+  // when ids are absent), never a newer one with the same sender and text
+  const rows=()=>[...log.querySelectorAll('[role=article]')];
+  const ours=()=>t.m.id?rows().find(x=>F.parseMessage(x,log).id===t.m.id):t.a.isConnected?t.a:undefined;
+  // reactions are aggregates without authors ("❤️2", skin-tone variants are separate graphemes): our
+  // emoji's count must grow from its value right before the click, or someone else's identical
+  // emoji (or an unrelated change) would confirm a reaction that never landed
+  // (Messenger exposes no per-user ownership here, so a click that toggles an existing own reaction off is reported as not landed)
+  const count=re=>{
+   const g=[...new Intl.Segmenter().segment(re)].map(x=>x.segment);let total=0;
+   for(let i=0;i<g.length;i++){if(g[i]!==emoji)continue;let n='';while(/^\d$/.test(g[i+1]||''))n+=g[++i];total+=n?+n:1;}
+   return total;
+  };
+  const now=()=>{const m=ours();return m?count(F.parseMessage(m,log).re):-1};
+  // no baseline without the message on screen: a remount with old reactions must not look like a new one
+  const before=now();
+  if(before<0)return 'the message is no longer on screen; nothing was changed';
+  F.press(pick);
+  const ok=await waitFor(()=>now()>before,3000,150);
   if(!ok)return 'the reaction did not land on the message';
   return{text:'reacted '+emoji+' to '+(t.m.sender||'a message')+': '+(t.m.text||'['+(t.m.att||'attachment')+']')};
  };
@@ -526,12 +559,15 @@
  // it above the composer; the caller then sends the reply text normally.
  F.msgReplyOpen=async match=>{
   const t=await F.msgTarget(match);
-  if(!t)return match?'no message contains that text':'no message found in this chat';
+  if(t.err)return t.err;
   const btn=await F.msgToolbarBtn(t.a,/^reply|reply|trả lời|répondre/i);
   if(!btn)return 'no reply button on that message';
-  F.press(btn);
   const log=document.querySelector('[role=log]');
-  const banner=await waitFor(()=>[...document.querySelectorAll('div,span')].find(e=>!log.contains(e)&&e.children.length<4&&/replying to|đang trả lời|vous répondez/i.test(e.textContent||'')&&e.getBoundingClientRect().width>0)||null,4000,150);
+  const quotes=()=>[...document.querySelectorAll('div,span')].filter(e=>!log.contains(e)&&!e.contains(log)&&e.children.length<4&&/replying to|đang trả lời|vous répondez/i.test(e.textContent||'')&&e.getBoundingClientRect().width>0);
+  // only a quote that appears after our click counts: a sidebar preview or an earlier quote must not confirm it
+  const had=new Set(quotes());
+  F.press(btn);
+  const banner=await waitFor(()=>quotes().find(e=>!had.has(e))||null,4000,150);
   if(!banner)return 'the reply quote did not appear above the message box';
   return{text:'replying to '+(t.m.sender||'a message')+': '+(t.m.text||'['+(t.m.att||'attachment')+']')};
  };
