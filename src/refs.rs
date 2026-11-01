@@ -73,7 +73,8 @@ impl Refs {
         let [token] = args else {
             return Err("usage: resolve <ref>".into());
         };
-        self.get(token).ok_or_else(|| "unknown reference; read the item again".into())
+        self.get(token)
+            .ok_or_else(|| "unknown reference; read the item again".into())
     }
 
     pub fn get(&self, token: &str) -> Option<String> {

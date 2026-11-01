@@ -109,6 +109,31 @@ try{
   await evaluate('localStorage.removeItem("truncateDraft");JSON.stringify(true)');
  });
  await check('post receipt, Only me, view and delete',async()=>{const result=await fb('post','fixture private post','--to','me');assert.match(result,/^posted\tp\w+\t\/.*posts\//);const ref=result.split('\t')[1];assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.posts)[0].aud)'),'me');assert.match(await fb('view',ref),/fixture private post/);assert.match(await fb('delete',ref),/^deleted/);assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.posts).some(x=>x.text==="fixture private post"))'),false)});
+ await check('post reactions land, change and clear',async()=>{
+  const ref=(await fb('posts','me','-n','1')).split('\t')[0];
+  const state=async()=>await evaluate('JSON.stringify(String((JSON.parse(localStorage.posts).find(p=>p.id==="100")||{}).reaction??"none"))');
+  assert.match(await fb('react',ref,'love'),/^reacted love/);assert.equal(await state(),'Love');
+  assert.match(await fb('react',ref,'haha'),/^reacted haha/);assert.equal(await state(),'Haha');
+  assert.match(await fb('react',ref,'none'),/^reacted none/);assert.equal(await state(),'none');
+  assert.match(await fb('react',ref,'like'),/^reacted like/);assert.equal(await state(),'Like');
+  assert.match(await fb('react',ref,'none'),/^reacted none/);assert.equal(await state(),'none');
+ });
+ await check('post reactions wait out a slow picker',async()=>{
+  await evaluate('localStorage.pickerDelay="1600";JSON.stringify(true)');
+  const ref=(await fb('posts','me','-n','1')).split('\t')[0];
+  assert.match(await fb('react',ref,'wow'),/^reacted wow/);
+  assert.equal(await evaluate('JSON.stringify(String((JSON.parse(localStorage.posts).find(p=>p.id==="100")||{}).reaction??"none"))'),'Wow');
+  await fb('react',ref,'none');
+  await evaluate('localStorage.removeItem("pickerDelay");JSON.stringify(true)');
+ });
+ await check('post reactions ignore a later decoy toolbar',async()=>{
+  await evaluate('localStorage.decoyToolbar="true";JSON.stringify(true)');
+  const ref=(await fb('posts','me','-n','1')).split('\t')[0];
+  assert.match(await fb('react',ref,'love'),/^reacted love/);
+  assert.equal(await evaluate('JSON.stringify(String((JSON.parse(localStorage.posts).find(p=>p.id==="100")||{}).reaction??"none"))'),'Love');
+  await fb('react',ref,'none');
+  await evaluate('localStorage.removeItem("decoyToolbar");document.getElementById("decoyBar")?.remove();JSON.stringify(true)');
+ });
  await check('retained audience panes never become publish targets',async()=>{
   for(const label of ['Post','Đăng','Publier']){
    await evaluate(`localStorage.retainedAudience="true";localStorage.trailingControl="true";localStorage.postLabel=JSON.stringify(${JSON.stringify(label)});localStorage.wrongPublishTarget="false";JSON.stringify(true)`);
@@ -208,6 +233,16 @@ try{
   await evaluate('localStorage.pinStyle=JSON.stringify("segmented");localStorage.restored="false";localStorage.removeItem("unlocked");JSON.stringify(true)');
   await assert.rejects(()=>fb('unlock','9999'),/PIN was not accepted/);
   await evaluate('localStorage.removeItem("pinStyle");localStorage.restored="true";JSON.stringify(true)');
+ });
+ await check('message reactions can target an older duplicate',async()=>{
+  const savedMessages=await evaluate('JSON.stringify(localStorage.getItem("messages"))');
+  const savedReactions=await evaluate('JSON.stringify(localStorage.getItem("reactions"))');
+  await evaluate('localStorage.messages=JSON.stringify(["ok","ok","later"]);localStorage.removeItem("reactions");JSON.stringify(true)');
+  assert.match(await fb('msgreact','42','love','--match','ok'),/^reacted/);
+  assert.deepEqual(await evaluate('JSON.stringify(JSON.parse(localStorage.reactions||"{}"))'),{'1':'❤️'});
+  assert.match(await fb('msgreact','42','wow','--match','ok','--nth','1'),/^reacted/);
+  assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.reactions||"{}")["0"])'),'😮');
+  await evaluate(`localStorage.messages=${JSON.stringify(savedMessages)};localStorage.reactions=${JSON.stringify(savedReactions)};JSON.stringify(true)`);
  });
  await check('HTTP named page initializes outside a secure context',async()=>{
   assert.match(await fb('page','http','open','http://example.test/'),/^url\thttp:\/\/example.test\//);
@@ -494,6 +529,17 @@ try{
   assert.match(browse,/https:\/\/www\.facebook\.com\/marketplace\/item\/557\t.*\tlisting/);
   const searched=await fb('marketplace','chair');
   assert.match(searched,/Wooden chair/);
+ });
+ await check('group members list every profile link form',async()=>{
+  const out=await fb('members','/groups/111','-n','10','--urls');
+  assert.match(out,/Alice Admin\thttps:\/\/www\.facebook\.com\/alice\.admin/);
+  assert.match(out,/Bob People\thttps:\/\/www\.facebook\.com\/people\/Bob-People\/100002/);
+  assert.match(out,/Carol Groupuser\thttps:\/\/www\.facebook\.com\/profile\.php\?id=100003/);
+  assert.match(out,/Dave Id\thttps:\/\/www\.facebook\.com\/profile\.php\?id=100004/);
+ });
+ await check('group page serves its posts',async()=>{
+  const out=await fb('posts','/groups/111','-n','5','--urls');
+  assert.match(out,/Existing profile post/);
  });
  await check('group join, idempotence, questions and leave',async()=>{
   assert.equal(await fb('group-join','111'),'joined group');
