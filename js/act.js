@@ -62,7 +62,7 @@
   return ok?true:'no preview';
  };
  // matched against the first line only: "Friends except..." is a different audience from "Friends"
- const AUD={public:/^(Công khai|Public|Publique)$/i,friends:/^(Bạn bè|Friends|Amis)$/i,me:/^(Chỉ mình tôi|Only me|Moi uniquement)$/i};
+ const AUD={public:/^(Công khai|Public|Publique|Veřejné|Verejné)$/i,friends:/^(Bạn bè|Friends|Amis|Přátelé|Priatelia)$/i,me:/^(Chỉ mình tôi|Only me|Moi uniquement|Jen já|Len ja)$/i};
  const first=t=>clean(t).split('\n')[0].trim();
  F.composeAudience=async(kind)=>{
   const d=F.composeDialog();if(!d)return 'no composer';

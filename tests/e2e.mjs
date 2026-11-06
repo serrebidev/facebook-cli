@@ -181,6 +181,19 @@ try{
    assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.posts||"[]").length)'),before);
   }}finally{await evaluate('localStorage.removeItem("composerDraftText");JSON.stringify(true)')}
  });
+ await check('post with Czech and Slovak audience labels',async()=>{
+  // BlindFB #20: the audience picker matched only English/French/Vietnamese
+  // labels, so posting from a Czech or Slovak interface failed with
+  // 'audience option not found' for every audience.
+  for(const lang of ['cs','sk']){
+   await evaluate(`localStorage.audLang=JSON.stringify(${JSON.stringify(lang)});JSON.stringify(true)`);
+   try{
+    for(const kind of ['public','friends','me']){
+     const result=await fb('post','audience '+lang+' '+kind,'--to',kind);assert.match(result,/^posted\tp\w+\t/);assert.equal(await evaluate('JSON.stringify(JSON.parse(localStorage.posts)[0].aud)'),kind);await fb('delete',result.split('\t')[1]);
+    }
+   }finally{await evaluate('localStorage.removeItem("audLang");JSON.stringify(true)')}
+  }
+ });
  await check('retained audience panes never become publish targets',async()=>{
   for(const label of ['Post','Đăng','Publier']){
    await evaluate(`localStorage.retainedAudience="true";localStorage.trailingControl="true";localStorage.postLabel=JSON.stringify(${JSON.stringify(label)});localStorage.wrongPublishTarget="false";JSON.stringify(true)`);
