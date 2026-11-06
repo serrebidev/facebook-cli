@@ -127,8 +127,9 @@
     const p=stripQ(a.getAttribute('href'));
     const chunks=vtext(a).map(clean).filter(Boolean);
     if(!chunks.length)continue;
-    const price=chunks.find(c=>/^[$€£¥]|^(Free|Miễn phí)$/i.test(c))||'';
-    const rest=chunks.filter(c=>c!==price);
+    const price=chunks.find(c=>/^[$€£¥]|^[\d.,\s \u202f]+[$€£¥]$|^(Free|Miễn phí|Gratuit)$/i.test(c))||'';
+    // a "Just listed" badge comes before the price and is not the listing's title
+    const rest=chunks.filter(c=>c!==price&&!/^(Just listed|Annonce récente)$/i.test(c));
     if(!byPath.has(p))byPath.set(p,{title:rest[0]||'',price,loc:rest.slice(1).join(' · ')});
    }
    return [...byPath.entries()].map(([p,g])=>({k:p,v:[g.title,'https://www.facebook.com'+p,trunc([g.price,g.loc].filter(Boolean).join(' · '),120),'listing']}));

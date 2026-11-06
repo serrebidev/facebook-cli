@@ -454,14 +454,31 @@ pub async fn comment(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
     r
 }
 
+/// How a selected reaction button starts, per language ("Remove Love from …").
+const REMOVE_PREFIXES: [&str; 3] = ["remove ", "retirer ", "supprimer "];
+/// What follows the reaction name in a selected button ("… from <author>'s post",
+/// French "… de la publication de <author>").
+const TARGET_SEPARATORS: [&str; 4] = [
+    " from ",
+    " de la publication",
+    " à la publication",
+    " sur la publication",
+];
+
 /// The reaction precedes the author in "Remove Love from <author>'s post".
 /// Keep localized suffix matching ("Yêu thích" also ends with "thích").
 fn current_reaction(label: &str, picker: &[String]) -> Option<usize> {
     let l = label.to_lowercase();
-    let reaction = l
-        .strip_prefix("remove ")
-        .and_then(|rest| rest.split_once(" from "))
-        .map_or(l.as_str(), |(reaction, _)| reaction);
+    let reaction = REMOVE_PREFIXES
+        .iter()
+        .find_map(|prefix| l.strip_prefix(prefix))
+        .and_then(|rest| {
+            TARGET_SEPARATORS
+                .iter()
+                .filter_map(|separator| rest.split_once(separator).map(|(reaction, _)| reaction))
+                .min_by_key(|reaction| reaction.len())
+        })
+        .unwrap_or(l.as_str());
     picker
         .iter()
         .enumerate()
@@ -532,7 +549,9 @@ fn reaction_neutral(label: &str, picker: &[String]) -> bool {
         !first.is_empty()
             && (l == *first
                 || l.starts_with(&format!("{first} "))
-                || l.starts_with(&format!("react with {first} to ")))
+                || l.starts_with(&format!("{first},"))
+                || l.starts_with(&format!("react with {first} to "))
+                || l.starts_with(&format!("réagir avec {first} à ")))
     })
 }
 
@@ -1207,6 +1226,47 @@ mod tests {
         assert_eq!(current_reaction("Gỡ Thích", &picker), Some(0));
         assert_eq!(current_reaction("Gỡ Haha", &picker), Some(3));
         assert_eq!(current_reaction("Bày tỏ cảm xúc", &picker), None);
+    }
+
+    #[test]
+    fn french_reaction_labels() {
+        // Labels seen on a French Facebook account; the picker gives the names.
+        let picker: Vec<String> = [
+            "j’aime",
+            "j’adore",
+            "solidaire",
+            "haha",
+            "wouah",
+            "triste",
+            "grrr",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert!(reaction_neutral(
+            "Réagir avec J’aime à la publication de Logic Nation",
+            &picker
+        ));
+        assert!(reaction_neutral("J’aime, 28 réactions", &picker));
+        assert!(!reaction_neutral(
+            "Retirer J’adore de la publication de Logic Nation",
+            &picker
+        ));
+        assert_eq!(
+            current_reaction("Retirer J’adore de la publication de Logic Nation", &picker),
+            Some(1)
+        );
+        assert_eq!(current_reaction("Supprimer Haha", &picker), Some(3));
+        assert!(reaction_landed(
+            "Retirer J’aime de la publication de X",
+            &picker,
+            0
+        ));
+        assert!(!reaction_landed(
+            "Réagir avec J’aime à la publication de X",
+            &picker,
+            0
+        ));
     }
 
     #[test]
