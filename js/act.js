@@ -61,8 +61,11 @@
   const ok=await waitFor(()=>d.querySelectorAll('img[src^="blob:"],video').length>before||d.querySelectorAll('img[src^="data:"]').length>0,15000,150);
   return ok?true:'no preview';
  };
- // matched against the first line only: "Friends except..." is a different audience from "Friends"
- const AUD={public:/^(Công khai|Public|Publique)$/i,friends:/^(Bạn bè|Friends|Amis)$/i,me:/^(Chỉ mình tôi|Only me|Moi uniquement)$/i};
+ // matched against the first line only: "Friends except..." is a different audience from "Friends".
+ // The languages POST already recognizes, not just English/Vietnamese/French: a Czech
+ // composer (BlindFB #20) offered Veřejné/Přátelé/Jen já and every post failed here.
+ const AUD={public:/^(Công khai|Public|Publique|Público|Veřejné|Verejné|Publiczne|Öffentlich|Tutti|Openbaar|Herkese Açık|Доступно всем|Публічно|Offentligt|Offentlig|Julkinen)$/i,friends:/^(Bạn bè|Friends|Amis|Amigos|Přátelé|Priatelia|Znajomi|Freunde|Amici|Vrienden|Arkadaşlar|Друзья|Друзі|Vänner|Venner|Kaverit)$/i,me:/^(Chỉ mình tôi|Only me|Moi uniquement|Sólo yo|Solo yo|Somente eu|Jen já|Iba ja|Tylko ja|Nur ich|Solo io|Alleen ik|Sadece ben|Только я|Тільки я|Bara jag|Bare meg|Kun mig|Vain minä)$/i};
+ F.AUD=AUD;
  const first=t=>clean(t).split('\n')[0].trim();
  F.composeAudience=async(kind)=>{
   const d=F.composeDialog();if(!d)return 'no composer';
@@ -71,8 +74,8 @@
   if(!ab)return 'no audience button';
   if(AUD[kind].test(first(ab.innerText)))return true;
   ab.click();
-  const lab=await waitFor(()=>[...d.querySelectorAll('label')].find(l=>AUD[kind].test(first(l.innerText))),6000);
-  if(!lab)return 'audience option not found';
+  const lab=await waitFor(()=>[...d.querySelectorAll('label,[role=radio],[role=option]')].find(l=>AUD[kind].test(first(l.innerText||l.getAttribute('aria-label')))),6000);
+  if(!lab)return 'audience option not found'+composerState(d);
   lab.click();
   await sleep(300);
   const done=[...d.querySelectorAll('[role=button]')].filter(b=>btnText(b)).pop();

@@ -101,6 +101,11 @@ const F = global.window.__fb;
   next.onEvent = event => { if (event === 'click') { buttons = [pane]; pane.visibility = 'visible'; } };
   await G.composePrepare('requested draft');
   assert(next.events.includes('click'), 'the requested draft advances past Next');
+  // audience labels in the languages POST already recognizes (BlindFB #20:
+  // a Czech composer failed every post with 'audience option not found')
+  for (const [kind, label] of [['public', 'Veřejné'], ['friends', 'Přátelé'], ['me', 'Jen já'], ['public', 'Verejné'], ['friends', 'Priatelia'], ['me', 'Iba ja'], ['public', 'Publiczne'], ['friends', 'Znajomi'], ['me', 'Tylko ja'], ['public', 'Öffentlich'], ['friends', 'Freunde'], ['me', 'Nur ich'], ['public', 'Público'], ['friends', 'Amigos'], ['me', 'Solo yo']])
+    assert(G.AUD[kind].test(label), 'AUD ' + kind + ' should match: ' + label);
+  assert(!G.AUD.friends.test('Přátelé kromě'), 'a restricted audience is not Friends');
   console.log('js composer ok');
 })().catch(e => { console.error(e); process.exit(1); });
 
@@ -131,6 +136,7 @@ assert.strictEqual(F.profilePath('https://www.facebook.com/photo.php?fbid=1'), n
 console.log('js profilePath ok');
 assert.strictEqual(F.trunc('abcdef', 3), 'abc…');
 assert(F.ACT.test('Thích') && F.ACT.test('Reply') && !F.ACT.test('Hello'));
+assert(F.SPON.test('Sponzorováno') && F.SPON.test('Sponzorované') && F.SPON.test('Sponsorowane'), 'sponsored labels in Czech, Slovak and Polish');
 // A French Facebook account (labels seen live, see BlindFB docs/fr-labels.md).
 for (const t of ['il y a 10 heures', '8 h', '1 j', '1 sem.', '7 sem.', '2 ans', 'À l’instant', 'Aujourd’hui à 14:05', 'Hier à 9:00', 'lundi à 10:00', '1er janv.', '12 mars 2024'])
   assert(F.TIME.test(t), 'TIME should match: ' + t);
@@ -418,4 +424,29 @@ console.log('js removed-newest ok');
   assert.strictEqual(stepped2.length, 1);
   assert.strictEqual(stepped2[0].time, 'November 3 at 5:30 PM');
   console.log('js feed time fallback ok');
+
+  // feed step: a suggested card has no TIME-shaped chunk and its plain-text
+  // timestamp link decodes to nothing; the link's own rectangle must still
+  // give the caller a hover target, or the post ships with no link at all
+  // (BlindFB #21)
+  const suggAnchor = {
+    getAttribute: n => (n === 'href' ? '?__cft__[0]=x' : null),
+    innerText: '3h', focus() {}, blur() {}, scrollIntoView() {},
+    getBoundingClientRect: () => ({ x: 10, y: 20, width: 30, height: 10 }),
+    compareDocumentPosition: () => 4,
+  };
+  const profileEl3 = { innerText: 'Some Page', querySelector: () => null, closest: () => null };
+  const card3 = {
+    querySelector: sel => (sel.includes('profile_name') ? profileEl3 : sel.includes('story_message') ? msgEl : null),
+    querySelectorAll: sel => (sel === 'a[href]' ? [suggAnchor] : sel.includes('profile_name') ? [profileEl3] : []),
+    getAttribute: () => null,
+  };
+  const F5 = { ...F, postCards: () => [card3], postText: () => 'Suggested post text', vtext: () => ['Some Page', 'Suggested for you', 'Suggested post text'], num: () => '0', visible: () => true };
+  global.window = { __fb: F5 };
+  new Function(fs.readFileSync(path.join(__dirname, '../js/feed.js'), 'utf8')).call(global.window);
+  const stepped3 = await global.window.__fbFeed.step();
+  assert.strictEqual(stepped3.length, 1);
+  assert.strictEqual(stepped3[0].url, '');
+  assert.deepStrictEqual(stepped3[0].hover, [25, 25]);
+  console.log('js feed suggested hover ok');
 }).catch(e => { console.error(e); process.exit(1); });
