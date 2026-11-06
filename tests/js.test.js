@@ -101,6 +101,17 @@ const F = global.window.__fb;
   next.onEvent = event => { if (event === 'click') { buttons = [pane]; pane.visibility = 'visible'; } };
   await G.composePrepare('requested draft');
   assert(next.events.includes('click'), 'the requested draft advances past Next');
+  // Audience labels for every language the Post button list knows
+  // (BlindFB #20: a Czech/Slovak interface matched none of them).
+  for (const t of ['Public', 'Publique', 'Veřejné', 'Verejné', 'Publiczne', 'Öffentlich', 'Público', 'Доступно всем'])
+    assert(G.AUD.public.test(t), 'AUD public should match: ' + t);
+  for (const t of ['Friends', 'Amis', 'Přátelé', 'Priatelia', 'Znajomi', 'Freunde', 'Друзья', 'Kaverit'])
+    assert(G.AUD.friends.test(t), 'AUD friends should match: ' + t);
+  for (const t of ['Only me', 'Moi uniquement', 'Jen já', 'Len ja', 'Iba ja', 'Tylko ja', 'Nur ich', 'Только я', 'Vain minä'])
+    assert(G.AUD.me.test(t), 'AUD me should match: ' + t);
+  assert(!G.AUD.friends.test('Friends except…'), 'AUD must not match a different audience');
+  assert(!G.AUD.public.test('Friends'), 'AUD public must not match Friends');
+  console.log('js audience labels ok');
   console.log('js composer ok');
 })().catch(e => { console.error(e); process.exit(1); });
 
