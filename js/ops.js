@@ -258,9 +258,10 @@
    const lab=a.getAttribute('aria-label')||'';
    const nested=!!a.parentElement.closest('[role=article][aria-label]');
    const ref=[...a.querySelectorAll('a[href]')].map(x=>profilePath(x.getAttribute('href'))).find(Boolean)||'';
-   return {k:lab+body,ref,v:[(nested?'  ↳':'')+c[0],ti>=0?c[ti]:'',trunc(body,300)]};
+   const links=F.commentLinks([...a.querySelectorAll('a[href]')].map(x=>({href:x.href,raw:x.getAttribute('href'),text:x.innerText||''})));
+   return {k:lab+body,ref,links,v:[(nested?'  ↳':'')+c[0],ti>=0?c[ti]:'',trunc(body,300)]};
   }),20000,scEl);
-  for(const c of com){if(c.ref)lines.push('cu\t'+tab(c.ref));lines.push('c\t'+c.v.map(tab).join('\t'));}
+  for(const c of com){if(c.ref)lines.push('cu\t'+tab(c.ref));lines.push('c\t'+c.v.map(tab).join('\t'));for(const l of c.links||[])lines.push('cl\t'+tab(l.url)+'\t'+tab(l.label));}
   return {lines};
  };
 })();
