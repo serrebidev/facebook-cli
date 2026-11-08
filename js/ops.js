@@ -70,7 +70,9 @@
    };
    const kind=kindOf(url)||({people:'profile',pages:'page',groups:'group',events:'event',photos:'photo',videos:'video',posts:'post',places:'place'})[tab]||'profile';
    const target=['photo','video','event','place','listing'].includes(kind)?'https://www.facebook.com'+url:{r:'u',v:url};
-   return {k:url,v:[name,target,trunc(info.join(' · '),160),kind]};
+   // the row's own web address rides along as a fifth field: clients hold
+   // only a ref for most kinds, and a ref cannot be opened in a browser.
+   return {k:url,v:[name,target,trunc(info.join(' · '),160),kind,'https://www.facebook.com'+url]};
   }).filter(Boolean));
   return {rows:rows.map(r=>r.v)};
  };
