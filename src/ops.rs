@@ -541,6 +541,12 @@ pub async fn events(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
     hub_list(d, args, out, "https://www.facebook.com/events/", "events", 50).await
 }
 
+/// The pages on your pages page (facebook.com/pages): rows are name,
+/// ref (or the page URL with --urls), category / follower info.
+pub async fn pages(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
+    hub_list(d, args, out, "https://www.facebook.com/pages/", "pages", 100).await
+}
+
 /// The members of one group, from its members page
 /// (facebook.com/groups/<id>/members), gathered with scrolling like the
 /// joined-groups list. Rows: name, ref (or the profile URL with --urls),
