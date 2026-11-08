@@ -300,6 +300,14 @@ console.log('js removed-newest ok');
   global.window = { __fb: F2 };
   new Function(opsSrc).call(global.window);
 
+  // places: the directory's city links (href shapes verified live
+  // 2026-11-08) become rows; the directory root and other hubs do not
+  assert.strictEqual(F2.placePath('https://www.facebook.com/places/Things-to-do-in-Toronto-Ontario/110941395597405/'), '/places/Things-to-do-in-Toronto-Ontario/110941395597405');
+  assert.strictEqual(F2.placePath('/places/Things-to-do-in-St-Catharines/108098952555359'), '/places/Things-to-do-in-St-Catharines/108098952555359');
+  assert.strictEqual(F2.placePath('https://www.facebook.com/places/'), null);
+  assert.strictEqual(F2.placePath('https://www.facebook.com/events/123/'), null);
+  console.log('js places ok');
+
   // gather() (via F.friends): pagination that lands 1.2 s after the
   // scroller reaches the bottom, with a progressbar up the whole time,
   // belongs in the result. The settled-bottom exit must not fire while
