@@ -92,6 +92,7 @@ async fn run_inner(d: &Daemon, argv: &[String], _cwd: &str, out: &Out) -> Res<()
         "groups" => crate::ops::groups(d, &argv[1..], out).await,
         "events" => crate::ops::events(d, &argv[1..], out).await,
         "pages" => crate::ops::pages(d, &argv[1..], out).await,
+        "places" => crate::ops::places(d, &argv[1..], out).await,
         "members" => crate::ops::members(d, &argv[1..], out).await,
         "profile" => crate::ops::profile(d, &argv[1..], out).await,
         "notifs" => crate::ops::notifs(d, &argv[1..], out).await,

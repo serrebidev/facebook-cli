@@ -194,6 +194,7 @@
  };
  F.events=async(n)=>hubList(n,'[role=main] a[href*="/events/"]',h=>{const p=stripQ(h);return /^\/events\/\d+\/?$/.test(p)?p:null;},'no events visible');
  F.pages=async(n)=>hubList(n,'[role=main] a[href]',h=>profilePath(h),'no pages visible');
+ F.places=async(n)=>hubList(n,'[role=main] a[href*="/places/"]',h=>{const p=stripQ(h);return /^\/places\/[^/?#]+(\/\d+)?\/?$/.test(p)?p:null;},'no places visible');
  F.groupMembers=async(n)=>{
   const ok=await waitFor(()=>document.querySelector('[role=main] a[href]'),12000);
   if(!ok)return {rows:[],note:'no members visible'};
