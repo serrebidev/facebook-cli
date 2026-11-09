@@ -1,0 +1,54 @@
+# Generated from release.yml (build job): the macOS leg only, for the Forgejo Mac runner.
+# Dispatch with release_tag to attach the macOS build to an existing release.
+name: macOS release
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to build macOS for and attach to
+        required: true
+        type: string
+permissions:
+  contents: write
+jobs:
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    env:
+      TAG: ${{ inputs.release_tag }}
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        ref: ${{ inputs.release_tag }}
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: aarch64-apple-darwin
+    - uses: Swatinem/rust-cache@v2
+    - name: Check tag matches package version
+      shell: bash
+      run: test "$TAG" = "v$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+    - run: cargo build --release --locked --target aarch64-apple-darwin
+    - run: tar -czf fb-aarch64-darwin.tar.gz -C target/aarch64-apple-darwin/release fb -C "$GITHUB_WORKSPACE" LICENSE LICENSE-APACHE-2.0 THIRD_PARTY_NOTICES
+    - name: Add the macOS archive to SHA256SUMS
+      run: |
+        curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$TAG/SHA256SUMS" -o SHA256SUMS
+        grep -v ' fb-aarch64-darwin.tar.gz$' SHA256SUMS > SHA256SUMS.new || true
+        shasum -a 256 fb-aarch64-darwin.tar.gz >> SHA256SUMS.new
+        mv SHA256SUMS.new SHA256SUMS
+        cat SHA256SUMS
+    - name: Attach to the Forgejo release
+      env:
+        FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+      run: |
+        set -euo pipefail
+        api="$GITHUB_SERVER_URL/api/v1/repos/$GITHUB_REPOSITORY"
+        h="Authorization: token $FORGEJO_TOKEN"
+        release="$(curl -sf -H "$h" "$api/releases/tags/$TAG")"
+        id="$(echo "$release" | jq -r .id)"
+        for file in fb-aarch64-darwin.tar.gz SHA256SUMS; do
+          name="$(basename "$file")"
+          old="$(echo "$release" | jq -r --arg n "$name" '.assets[] | select(.name == $n) | .id')"
+          [ -z "$old" ] || curl -sf -X DELETE -H "$h" "$api/releases/$id/assets/$old"
+          curl -sf -o /dev/null -H "$h" -F "attachment=@$file" "$api/releases/$id/assets?name=$name"
+          echo "Attached $name to $TAG"
+        done
