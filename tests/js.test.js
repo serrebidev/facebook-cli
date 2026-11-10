@@ -454,4 +454,17 @@ console.log('js removed-newest ok');
   assert.strictEqual(stepped2.length, 1);
   assert.strictEqual(stepped2[0].time, 'November 3 at 5:30 PM');
   console.log('js feed time fallback ok');
+
+  // focusComposer: a mounted-but-hidden dialog (closed Notifications panel) must not block; a shown one must
+  const tb = { focus() { global.document.activeElement = tb; } };
+  const dlg = { isConnected: true, rects: 0, getClientRects() { return { length: this.rects }; }, innerText: 'Notifications', querySelector: () => null, querySelectorAll: () => [] };
+  global.getComputedStyle = () => ({ visibility: 'visible' });
+  global.document = { querySelectorAll: s => (s === '[role=dialog]' ? [dlg] : []), querySelector: s => (s.includes('textbox') ? tb : s === '[role=dialog]' ? dlg : null) };
+  const F5 = { ...F, sleep: async () => {}, waitFor: async fn => fn(), dismissRestore: async () => true };
+  global.window = { __fb: F5 };
+  new Function(fs.readFileSync(path.join(__dirname, '../js/msg.js'), 'utf8')).call(global.window);
+  assert.strictEqual(await F5.focusComposer(), true);
+  dlg.rects = 1;
+  await assert.rejects(F5.focusComposer(), /dialog blocks input/);
+  console.log('js focusComposer hidden dialog ok');
 }).catch(e => { console.error(e); process.exit(1); });
