@@ -12,7 +12,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, asset: fb-x86_64-linux }
+          - { os: wsl-linux, target: x86_64-unknown-linux-musl, asset: fb-x86_64-linux }
           - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, asset: fb-aarch64-linux }
           - { os: macos-15, target: aarch64-apple-darwin, asset: fb-aarch64-darwin }
           - { os: windows-latest, target: x86_64-pc-windows-msvc, asset: fb-x86_64-windows }
@@ -58,10 +58,26 @@ jobs:
           ln -s "$dir" target
           echo "CARGO_TARGET_DIR=$dir" >> "$GITHUB_ENV"
 
-      # Linux runs in a container with a stable path: rust-cache
-      # works there and stays the only cache.
+      # Linux legs run on desknasbox's WSL (runner wsl-linux-x64) in a job
+      # container. The runner mounts persistent volumes at
+      # /root/forgejo-runner/cargo-target and cargo's registry and git
+      # caches, so target/ points at a fixed folder there exactly as on
+      # the host runners, and the job image ships the apt packages and
+      # Rust (owner request 2026-11-11: Linux as fast as the other legs).
+      # CARGO_TARGET_DIR is the real path: CMake caches absolute paths.
+      - name: Persistent target folder (Linux WSL runner)
+        if: matrix.os == 'wsl-linux'
+        shell: bash
+        run: |
+          dir="$HOME/forgejo-runner/cargo-target/facebook-cli/build"
+          mkdir -p "$dir"
+          rm -rf target
+          ln -s "$dir" target
+          echo "CARGO_TARGET_DIR=$dir" >> "$GITHUB_ENV"
+
+      # The ARM leg has no WSL runner: rust-cache stays its cache.
       - uses: Swatinem/rust-cache@v2
-        if: runner.os == 'Linux'
+        if: matrix.os == 'ubuntu-24.04-arm'
       - name: Check tag matches package version
         shell: bash
         run: test "$GITHUB_REF_NAME" = "v$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
@@ -89,6 +105,11 @@ jobs:
 
       - name: Unlink persistent target folder (macOS)
         if: always() && runner.os == 'macOS'
+        shell: bash
+        run: rm -f target
+
+      - name: Unlink persistent target folder (Linux)
+        if: always() && matrix.os == 'wsl-linux'
         shell: bash
         run: rm -f target
   publish:
