@@ -172,6 +172,6 @@
  };
  /* a header's profile_name text without its own buttons: a group post's holds
     "Name · Follow" (FB innerText lines), which read as a second author */
- const profileName=el=>{const b=new Set([...el.querySelectorAll('[role=button]')].map(x=>clean(x.innerText)));return clean((el.innerText||'').split('\n').filter(l=>!b.has(clean(l))&&!/^[\s·]*$/.test(l)).join(' '))};
+ const profileName=el=>{const b=new Set([...(el.querySelectorAll?.('[role=button]')||[])].map(x=>clean(x.innerText)));return clean((el.innerText||'').split('\n').filter(l=>!b.has(clean(l))&&!/^[\s·]*$/.test(l)).join(' '))};
  window.__fb={profileName,parseLabel,mergeChunks,press,sleep,clean,vtext,waitFor,visible,enabled,pageLoading,dismissRestore,postCards,postText,canon,groupPath,profilePath,commentLinks,TIME,SPON,ACT,trunc,scrollerOf,num};
 })();
