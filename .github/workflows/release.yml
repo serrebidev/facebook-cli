@@ -135,4 +135,6 @@ jobs:
         with:
           files: dist/*
           fail_on_unmatched_files: true
-          generate_release_notes: true
+          # Not generate_release_notes: Forgejo has no generate-notes endpoint,
+          # so creating the release failed with 405.
+          body: "BlindFB backend ${{ github.ref_name }}: see the commits on the blindfb branch since the previous tag."
