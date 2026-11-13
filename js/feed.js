@@ -4,7 +4,8 @@
  /* each listed post's card, so post-menu can find it again; Facebook swaps a card's element
     when it re-renders it, but its feed position stays */
  const byUrl=new Map();
- const remember=(url,u)=>byUrl.set(url,{u,at:u.getAttribute('aria-posinset')});
+ /* capped: Facebook drops all but its last few dozen cards anyway, and each entry keeps its card's DOM alive */
+ const remember=(url,u)=>{byUrl.delete(url);byUrl.set(url,{u,at:u.getAttribute('aria-posinset')});if(byUrl.size>100)byUrl.delete(byUrl.keys().next().value)};
  /* post-menu: open a post's "Actions for this post" menu, press each label of `path` in turn
     (menu items, then whatever they open: submenus, dialogs such as Report), and describe what
     shows after the last press. Labels are Facebook's own text, so any language works. */
@@ -72,11 +73,11 @@
  const timeLink=u=>[...u.querySelectorAll('a[href]')].find(a=>/^(\?|.*(?:\/posts\/|story_fbid|\/permalink))/.test(a.getAttribute('href')));
  const g=(u,r)=>u.querySelector('[data-ad-rendering-role='+r+']');
  const more=msg=>msg?[...msg.querySelectorAll('[role=button],button')].filter(b=>window.__fb.visible(b)&&/^(See more|Xem thêm|Voir plus|Afficher la suite)$/i.test(clean(b.innerText))):[];
- const render=u=>[u.getAttribute('aria-posinset')||'',g(u,'profile_name')?.innerText||'',g(u,'profile_name')?.querySelector('a')?.getAttribute('href')||'',postText(g(u,'story_message')),timeLink(u)?.innerText||''].join('\0');
+ const render=u=>[u.getAttribute('aria-posinset')||'',g(u,'profile_name')?.innerText||'',g(u,'profile_name')?.querySelector('a')?.getAttribute('href')||'',msgs(u).map(postText).join('\0'),timeLink(u)?.innerText||''].join('\0');
  const POST=/\/posts\/|pfbid|\/permalink|story_fbid|multi_permalinks|\/videos\/|\/reel\/|\/photo\/?\?fbid/;
  /* which post a card shows: author and text only, since its time and links fill in later and
     would make the same post look new */
- const key=u=>{const a=g(u,'profile_name')?.querySelector('a');let p='';try{p=a?new URL(a.getAttribute('href'),location.href).pathname:''}catch(e){}return p+'\0'+postText(g(u,'story_message'))};
+ const key=u=>{const a=g(u,'profile_name')?.querySelector('a');let p='';try{p=a?new URL(a.getAttribute('href'),location.href).pathname:''}catch(e){}return p+'\0'+msgs(u).map(postText).join('\0')};
  /* every message block of a card: a shared post's own text, then the original post's */
  const msgs=u=>[...u.querySelectorAll('[data-ad-rendering-role=story_message]')].filter(m=>window.__fb.visible(m));
  /* a share or reel without a message of its own: its attachment title, else a photo description.
