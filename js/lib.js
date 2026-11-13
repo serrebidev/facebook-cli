@@ -10,7 +10,10 @@
  // region, and its own loading-state placeholder. A list that looks
  // settled while one of these is present is mid-load, not finished: its
  // height and rows simply have not moved YET.
- const pageLoading=(root)=>!!(root||document).querySelector('[role=progressbar],[aria-busy="true"],[data-visualcompletion="loading-state"]');
+ // Only a loader on screen counts: Facebook keeps a 0x0 progressbar outside
+ // [role=main] mounted on pages that finished loading (notifications, live
+ // 2026-11-12), which held every gather() to its full time cap.
+ const pageLoading=(root)=>[...(root||document).querySelectorAll('[role=progressbar],[aria-busy="true"],[data-visualcompletion="loading-state"]')].some(e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0;});
  const enabled=e=>!e.matches(':disabled')&&e.closest('[aria-disabled="true" i],[aria-disabled="false" i]')?.getAttribute('aria-disabled').toLowerCase()!=='true';
  // Use application buttons: removing a modal leaves React's focus trap and state alive.
  const dismissRestore=async()=>{

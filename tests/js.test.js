@@ -7,6 +7,8 @@ global.window = { };
 global.document = { querySelectorAll: () => [], querySelector: () => null };
 global.location = { href: 'https://www.facebook.com/' };
 global.URL = URL;
+// A loader Facebook draws on screen; pageLoading ignores 0x0 ones.
+const LOADER = { getBoundingClientRect: () => ({ width: 24, height: 24 }) };
 
 const src = fs.readFileSync(path.join(__dirname, '../js/lib.js'), 'utf8');
 new Function(src).call(global.window);
@@ -291,12 +293,16 @@ console.log('js removed-newest ok');
   console.log('js chats ok');
 })().then(async () => {
   // pageLoading: Facebook's three in-flight markers, and only those
-  const spinRoot = { querySelector: s => (s.includes('progressbar') ? {} : null) };
-  const busyRoot = { querySelector: s => (s.includes('aria-busy') ? {} : null) };
-  const calmRoot = { querySelector: () => null };
+  const spinRoot = { querySelectorAll: s => (s.includes('progressbar') ? [LOADER] : []) };
+  const busyRoot = { querySelectorAll: s => (s.includes('aria-busy') ? [LOADER] : []) };
+  const calmRoot = { querySelectorAll: () => [] };
+  // Facebook keeps a 0x0 progressbar mounted on finished pages (notifications):
+  // counting it held every list read to its full time cap.
+  const idleRoot = { querySelectorAll: () => [{ getBoundingClientRect: () => ({ width: 0, height: 0 }) }] };
   assert.strictEqual(F.pageLoading(spinRoot), true);
   assert.strictEqual(F.pageLoading(busyRoot), true);
   assert.strictEqual(F.pageLoading(calmRoot), false);
+  assert.strictEqual(F.pageLoading(idleRoot), false);
   console.log('js pageLoading ok');
 
   const opsSrc = fs.readFileSync(path.join(__dirname, '../js/ops.js'), 'utf8');
@@ -329,6 +335,7 @@ console.log('js removed-newest ok');
         return null;
       },
       querySelectorAll: sel => {
+        if (sel.includes('progressbar')) return state.loading ? [LOADER] : [];
         if (sel.includes('friends_mutual')) return Array.from({ length: mounted }, (_, i) => anchor('https://www.facebook.com/friend' + i + '/friends_mutual', '3 mutual friends'));
         if (sel.includes('a[href]')) return Array.from({ length: mounted }, (_, i) => anchor('https://www.facebook.com/friend' + i, 'Friend ' + i));
         return [];
@@ -370,7 +377,7 @@ console.log('js removed-newest ok');
   };
   const feedEl = { querySelector: () => null, querySelectorAll: () => [] };
   global.document = {
-    querySelectorAll: sel => (sel.includes('[role=button]') ? [chip] : []),
+    querySelectorAll: sel => (sel.includes('[role=button]') ? [chip] : sel.includes('progressbar') && chipLoading ? [LOADER] : []),
     querySelector: sel => {
       if (sel.includes('progressbar')) return chipLoading ? {} : null;
       if (sel.includes('[data-stranger]')) return stranger ? {} : null;
@@ -391,7 +398,7 @@ console.log('js removed-newest ok');
   global.document = {
     documentElement: { scrollHeight: 2000 }, body: { scrollHeight: 2000 },
     querySelector: sel => (sel.includes('progressbar') ? (feedLoading ? {} : null) : null),
-    querySelectorAll: () => [],
+    querySelectorAll: sel => (sel.includes('progressbar') && feedLoading ? [LOADER] : []),
   };
   global.window = { __fb: F, scrollY: 1500, innerHeight: 500 };
   new Function(fs.readFileSync(path.join(__dirname, '../js/feed.js'), 'utf8')).call(global.window);
