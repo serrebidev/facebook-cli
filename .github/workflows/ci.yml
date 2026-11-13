@@ -77,7 +77,9 @@ jobs:
       - run: node tests/e2e-isolation.mjs
         env:
           CHROME: ${{ runner.os == 'Linux' && 'google-chrome' || runner.os == 'macOS' && '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' || 'C:\Program Files\Google\Chrome\Application\chrome.exe' }}
-      - uses: actions/upload-artifact@v4
+      # Forgejo: actions/upload-artifact and download-artifact v4 refuse anything
+      # but github.com (GHESNotSupportedError); Forgejo's builds speak its API.
+      - uses: https://code.forgejo.org/forgejo/upload-artifact@v4
         if: always()
         with:
           name: e2e-${{ runner.os }}

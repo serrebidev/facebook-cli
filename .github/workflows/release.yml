@@ -13,10 +13,14 @@ jobs:
       matrix:
         include:
           - { os: wsl-linux, target: x86_64-unknown-linux-musl, asset: fb-x86_64-linux }
-          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, asset: fb-aarch64-linux }
+          # No arm runner exists: the x86 WSL runner cross-builds aarch64. fb is pure
+          # Rust (no C), so rust-lld links it against Rust's bundled musl.
+          - { os: wsl-linux, target: aarch64-unknown-linux-musl, asset: fb-aarch64-linux }
           - { os: macos-15, target: aarch64-apple-darwin, asset: fb-aarch64-darwin }
           - { os: windows-latest, target: x86_64-pc-windows-msvc, asset: fb-x86_64-windows }
     runs-on: ${{ matrix.os }}
+    env:
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: rust-lld
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -75,9 +79,6 @@ jobs:
           ln -s "$dir" target
           echo "CARGO_TARGET_DIR=$dir" >> "$GITHUB_ENV"
 
-      # The ARM leg has no WSL runner: rust-cache stays its cache.
-      - uses: Swatinem/rust-cache@v2
-        if: matrix.os == 'ubuntu-24.04-arm'
       - name: Check tag matches package version
         shell: bash
         run: test "$GITHUB_REF_NAME" = "v$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
@@ -87,7 +88,9 @@ jobs:
       - if: runner.os == 'Windows'
         shell: pwsh
         run: Compress-Archive -Path target/${{ matrix.target }}/release/fb.exe,LICENSE,LICENSE-APACHE-2.0,THIRD_PARTY_NOTICES -DestinationPath ${{ matrix.asset }}.zip
-      - uses: actions/upload-artifact@v4
+      # Forgejo: actions/upload-artifact and download-artifact v4 refuse anything
+      # but github.com (GHESNotSupportedError); Forgejo's builds speak its API.
+      - uses: https://code.forgejo.org/forgejo/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
           path: |
@@ -116,7 +119,9 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      # Forgejo: actions/upload-artifact and download-artifact v4 refuse anything
+      # but github.com (GHESNotSupportedError); Forgejo's builds speak its API.
+      - uses: https://code.forgejo.org/forgejo/download-artifact@v4
         with:
           path: dist
           pattern: fb-*
