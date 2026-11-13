@@ -77,6 +77,8 @@
  /* which post a card shows: author and text only, since its time and links fill in later and
     would make the same post look new */
  const key=u=>{const a=g(u,'profile_name')?.querySelector('a');let p='';try{p=a?new URL(a.getAttribute('href'),location.href).pathname:''}catch(e){}return p+'\0'+postText(g(u,'story_message'))};
+ /* every message block of a card: a shared post's own text, then the original post's */
+ const msgs=u=>[...u.querySelectorAll('[data-ad-rendering-role=story_message]')].filter(m=>window.__fb.visible(m));
  /* a share or reel without a message of its own: its attachment title, else a photo description.
     Attachment fields can hold scrambled single-word tokens instead of text, so require a space. */
  const attached=u=>{
@@ -94,7 +96,7 @@
    for(const u of postCards()){
     const name=g(u,'profile_name');
     if(!name)continue;
-    if(more(g(u,'story_message')).length)continue;
+    if(msgs(u).some(m=>more(m).length))continue;
     /* skip read cards before any waiting: ads never reveal, so waiting on every mounted card
        each step made one page of posts take a minute */
     if(seen.get(u)===key(u))continue;
@@ -152,7 +154,7 @@
        empty (BlindFB issue #16). */
     const svg=svgText(tlk);
     const linkTime=tlk&&!dt?svg||clean(tlk.innerText):'';
-    out.push({pos,url,alt:alt?canon(alt):'',author:head.join(' / '),aref,time:dt&&dt.text?dt.text:(svg||(ti<0?linkTime:ch[ti])),text:postText(msg)||attached(u),
+    out.push({pos,url,alt:alt?canon(alt):'',author:head.join(' / '),aref,time:dt&&dt.text?dt.text:(svg||(ti<0?linkTime:ch[ti])),text:msgs(u).map(postText).filter(Boolean).reduce((all,t)=>all?all+(/[.!?…:]$/.test(all)?'\n\n':'.\n\n')+t:t,'')||attached(u),
       r:num(g(u,'like_button')),c:num(g(u,'comment_button')),s:num(g(u,'share_button')),
       ad:SPON.test(svg)||ch.slice(0,12).some(c=>SPON.test(c)),hover});
     if(url||!hover)continue;
@@ -172,7 +174,7 @@
    return found;
   },
   /* post-menu on a card this tab listed. {gone:true}: Facebook dropped the card (it keeps
-     only the last ~80 cards of a long feed), so the caller uses the post's own page. */
+     only the last 10-25 posts of a long feed), so the caller uses the post's own page. */
   async menu(url,path){
    const want=canon(url),known=byUrl.get(want);
    const u=known&&(known.u.isConnected?known.u:known.at&&document.querySelector('[aria-posinset="'+known.at+'"]'));
@@ -194,8 +196,7 @@
   async expand(){
    const pending=[];
    for(const card of postCards()){
-    const msg=g(card,'story_message');if(!msg)continue;
-    for(const b of more(msg)){
+    for(const msg of msgs(card))for(const b of more(msg)){
      pending.push(msg);window.__fb.press(b);
     }
    }
