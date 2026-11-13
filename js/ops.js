@@ -218,7 +218,7 @@
    }
    return [...byPath.entries()].map(([p,m])=>({k:p,v:[m.name,{r:'u',v:p},trunc(m.info.join(' · '),120)]}));
   /* a big group scrolls ~20 members a second: the default 25 s cut -n 500 at
-     ~476, and a larger -n got no further. Scale with n, inside the 150 s command limit. */
+     ~476, and a larger -n got no further. Scale with n; src/cmd.rs adds the extra time to the command limit. */
   },Math.min(120000,Math.max(25000,n*60)));
   return {rows:rows.map(r=>r.v)};
  };
