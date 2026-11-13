@@ -60,6 +60,15 @@ const F = global.window.__fb;
   assert.match(await G.composePrepare(), /Post button not found/);
   buttons = [button('div', 'Share note')];
   assert.match(await G.composePrepare(), /Post button not found.*Share note.*nothing was posted/, 'the error names what is on screen');
+  // a control wrapping an editor names no draft text in the diagnostics
+  const wrapper = Object.assign(button('div', 'Public action PRIVATE_NESTED_DRAFT'), {
+    getAttribute(name) { return name === 'role' ? 'button' : null; },
+    querySelector: sel => (sel.includes('contenteditable') ? {} : null),
+  });
+  buttons = [button('div', 'Share note'), wrapper];
+  const nested = await G.composePrepare();
+  assert.match(nested, /Share note/);
+  assert(!nested.includes('PRIVATE_NESTED_DRAFT'), 'diagnostics must not expose a nested draft: ' + nested);
   buttons = [];
   buttons = [button()]; buttons[0].disabled = true;
   assert.match(await G.composePrepare(), /Post button.*disabled/);
@@ -173,6 +182,20 @@ for (const t of ['J’aime', "J'aime", 'Répondre', 'Partager', 'Modifié', 'Voi
 assert.strictEqual(F.clean('Oh My Mag Les comptes avec un badge Vérifié ont été authentifiés. Il peut s’agir d’abonnés Meta Verified ou de personnes ou de marques notables.'), 'Oh My Mag Verified');
 assert.strictEqual(F.clean('4\u202f890\u00a0€'), '4 890 €');
 const count = text => F.num({parentElement: {parentElement: {innerText: text}}});
+// a newline or tab inside a counter would split TSV records: not a count
+for (const t of ['1,9\nK', '4\t890']) assert.strictEqual(count(t), '0', 'count ' + JSON.stringify(t));
+// an author named like a weekday or "today" is not a timestamp
+for (const t of ['Lundi Matin', 'Aujourd’hui en France', 'Dimanche soir']) assert(!F.TIME.test(t), 'TIME must not match: ' + t);
+for (const t of ['lundi à 10:00', 'Aujourd’hui à 14:05']) assert(F.TIME.test(t), 'TIME should match: ' + t);
+// comment-link UI filters apply to Facebook only: external pages keep these shapes
+assert.deepStrictEqual(F.commentLinks([
+  {href: 'https://l.facebook.com/l.php?u=https%3A%2F%2Fexample.org%2Fstory%3Fcomment_id%3D42&h=x', raw: 'https://l.facebook.com/l.php?u=x', text: 'story'},
+  {href: 'https://www.tiktok.com/hashtag/cats', raw: 'https://www.tiktok.com/hashtag/cats', text: '#cats on TikTok'},
+  {href: 'https://www.facebook.com/hashtag/news', raw: '/hashtag/news', text: '#news'},
+]), [
+  {label: 'story', url: 'https://example.org/story?comment_id=42'},
+  {label: '#cats on TikTok', url: 'https://www.tiktok.com/hashtag/cats'},
+]);
 for (const t of ['28', '1.2K', '1,9 K', '40,1\u00a0K', '4\u202f890']) assert.strictEqual(count(t), t, 'count ' + t);
 assert.strictEqual(count('28 réactions'), '0');
 console.log('js french ok');
@@ -479,3 +502,75 @@ console.log('js removed-newest ok');
   await assert.rejects(F5.focusComposer(), /dialog blocks input/);
   console.log('js focusComposer hidden dialog ok');
 }).catch(e => { console.error(e); process.exit(1); });
+
+// events: hidden links never count toward n, a labelled action link is no detail, a name split across spans stays whole,
+// a second link's first line is a detail, and details that render later are merged in
+(async () => {
+  const vm = require('vm');
+  const link = (href, lines, hidden = false) => ({ href, lines, hidden,
+    getAttribute: k => (k === 'href' ? href : null),
+    get innerText() { return this.lines.join('\n'); },
+    getClientRects() { return this.hidden ? [] : [{}]; } });
+  const anchors = [
+    link('/events/999/', ['Hidden Item'], true),
+    link('/events/111/', ['City Library']),
+    Object.assign(link('/events/111/', ['View']), { getAttribute: k => (k === 'href' ? '/events/111/' : k === 'aria-label' ? 'View' : null) }),
+    link('/events/222/', ['Jazz Night']),
+  ];
+  let pass = 0;
+  const scroll = () => {
+    pass++;
+    if (pass === 1) anchors.push(link('/events/222/', ['Sat, Nov 14', 'Town Hall']));
+    if (pass === 2) anchors[1].lines.push('Library · 1K followers');
+  };
+  const doc = { querySelector: () => anchors[0], querySelectorAll: sel => (sel.includes('a[href]') ? anchors : []), documentElement: { scrollHeight: 800 } };
+  const ctx = vm.createContext({ window: { scrollBy: scroll }, document: doc, location: { href: 'https://www.facebook.com/' }, URL, setTimeout, Date, innerHeight: 800,
+    getComputedStyle: () => ({ visibility: 'visible', display: 'block' }) });
+  vm.runInContext(src, ctx);
+  const G = ctx.window.__fb;
+  Object.assign(G, { sleep: async () => {}, waitFor: async f => f() });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../js/ops.js'), 'utf8'), ctx);
+  const one = JSON.parse(JSON.stringify((await G.events(1)).rows));
+  assert.strictEqual(one[0][0], 'City Library', 'a hidden link must not fill -n 1: ' + JSON.stringify(one));
+  const rows = JSON.parse(JSON.stringify((await G.events(10)).rows));
+  assert.deepStrictEqual(rows.map(r => r[0]), ['City Library', 'Jazz Night']);
+  assert.strictEqual(rows[0][2], 'Library · 1K followers', 'later details merge in');
+  assert.strictEqual(rows[1][2], 'Sat, Nov 14 · Town Hall', 'a second link keeps its first line');
+  console.log('js events hub ok');
+})().catch(e => { console.error(e); process.exit(1); });
+
+// groups: hidden links never count toward n, a labelled action link is no detail, a name split across spans stays whole,
+// a second link's first line is a detail, and details that render later are merged in
+(async () => {
+  const vm = require('vm');
+  const link = (href, lines, hidden = false) => ({ href, lines, hidden,
+    getAttribute: k => (k === 'href' ? href : null),
+    get innerText() { return this.lines.join('\n'); },
+    getClientRects() { return this.hidden ? [] : [{}]; } });
+  const anchors = [
+    link('/groups/999', ['Hidden Item'], true),
+    link('/groups/111', ['City Library']),
+    Object.assign(link('/groups/111', ['View']), { getAttribute: k => (k === 'href' ? '/groups/111' : k === 'aria-label' ? 'View' : null) }),
+    link('/groups/222', ['Jazz Night']),
+  ];
+  let pass = 0;
+  const scroll = () => {
+    pass++;
+    if (pass === 1) anchors.push(link('/groups/222', ['Sat, Nov 14', 'Town Hall']));
+    if (pass === 2) anchors[1].lines.push('Library · 1K followers');
+  };
+  const doc = { querySelector: () => anchors[0], querySelectorAll: sel => (sel.includes('a[href]') ? anchors : []), documentElement: { scrollHeight: 800 } };
+  const ctx = vm.createContext({ window: { scrollBy: scroll }, document: doc, location: { href: 'https://www.facebook.com/' }, URL, setTimeout, Date, innerHeight: 800,
+    getComputedStyle: () => ({ visibility: 'visible', display: 'block' }) });
+  vm.runInContext(src, ctx);
+  const G = ctx.window.__fb;
+  Object.assign(G, { sleep: async () => {}, waitFor: async f => f() });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../js/ops.js'), 'utf8'), ctx);
+  const one = JSON.parse(JSON.stringify((await G.groups(1)).rows));
+  assert.strictEqual(one[0][0], 'City Library', 'a hidden link must not fill -n 1: ' + JSON.stringify(one));
+  const rows = JSON.parse(JSON.stringify((await G.groups(10)).rows));
+  assert.deepStrictEqual(rows.map(r => r[0]), ['City Library', 'Jazz Night']);
+  assert.strictEqual(rows[0][2], 'Library · 1K followers', 'later details merge in');
+  assert.strictEqual(rows[1][2], 'Sat, Nov 14 · Town Hall', 'a second link keeps its first line');
+  console.log('js groups hub ok');
+})().catch(e => { console.error(e); process.exit(1); });

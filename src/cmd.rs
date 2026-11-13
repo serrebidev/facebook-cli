@@ -14,7 +14,7 @@ fn members_extra_secs(argv: &[String]) -> u64 {
     }
     let n = argv
         .iter()
-        .position(|a| a == "-n")
+        .rposition(|a| a == "-n")
         .and_then(|i| argv.get(i + 1)?.parse::<u64>().ok())
         .unwrap_or(0);
     (n.saturating_mul(60).clamp(25_000, 120_000) - 25_000).div_ceil(1000)

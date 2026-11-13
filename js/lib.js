@@ -80,12 +80,12 @@
  const canon=h=>{try{const u=new URL(h,location.href);const KEEP=['fbid','story_fbid','id','v','set','idorvanity','q'];const mp=u.searchParams.get('multi_permalinks');if(mp&&/^\/groups\/\d+\/?$/.test(u.pathname))return u.pathname.replace(/\/?$/,'/posts/'+mp);for(const p of [...u.searchParams.keys()])if(!KEEP.includes(p))u.searchParams.delete(p);return u.pathname+u.search;}catch(e){return ''}};
  const groupPath=h=>{try{const u=new URL(h,location.href);const m=u.pathname.match(/^\/groups\/([^/]+)\/?$/);if(!m)return null;if(/^(feed|discover|joins|create|search)$/.test(m[1]))return null;return '/groups/'+m[1];}catch(e){return null}};
  const profilePath=h=>{try{const u=new URL(h,location.href);if(u.pathname==='/profile.php'){const id=u.searchParams.get('id');return id?'/profile.php?id='+id:null;}const people=u.pathname.match(/^\/people\/[^/]+\/(\d+)\/?$/);if(people)return u.pathname.replace(/\/?$/,'');const guser=u.pathname.match(/^\/groups\/[^/]+\/user\/(\d+)\/?$/);if(guser)return '/profile.php?id='+guser[1];const m=u.pathname.match(/^\/([A-Za-z0-9.]{3,})\/?$/);if(!m)return null;if(/^(groups|watch|reels?|videos|events|pages|search|friends|notifications|messages|marketplace|gaming|bookmarks|settings|help|login|photo|photo\.php|permalink\.php|story\.php|share|media|albums|notes|offers|jobs|fundraisers|saved|memories|news|local|people|home|menu|privacy|terms|about|developers|careers)$/i.test(m[1]))return null;return '/'+m[1];}catch(e){return null}};
- const TIME=/^(\d+\s*(giây|phút|giờ|ngày|tuần|tháng|năm)(\s*trước)?|Hôm qua.*|Vừa xong|Yesterday.*|Just now|\d+\s*(s|m|h|d|w|y|hr|hrs|min|mins)|\d+\s+(seconds?|minutes?|hours?|days?|weeks?|months?|years?)(\s+ago)?|\d{1,2}\s+tháng\s+\d{1,2}.*|(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}.*|il y a .*|hier.*|aujourd[’']hui.*|[àa] l[’']instant|\d+\s*(j|sem\.?|ans?)|\d+\s+(secondes?|minutes?|heures?|jours?|semaines?|mois|ans?)|(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche).*|(\d{1,2}|1er) (janv|févr|mars|avr|mai|juin|juil|août|sept|oct|nov|déc).*)$/i;
+ const TIME=/^(\d+\s*(giây|phút|giờ|ngày|tuần|tháng|năm)(\s*trước)?|Hôm qua.*|Vừa xong|Yesterday.*|Just now|\d+\s*(s|m|h|d|w|y|hr|hrs|min|mins)|\d+\s+(seconds?|minutes?|hours?|days?|weeks?|months?|years?)(\s+ago)?|\d{1,2}\s+tháng\s+\d{1,2}.*|(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}.*|il y a .*|hier.*|aujourd[’']hui(\s+[àa]\s+\d{1,2}[:h]\d{2})?|[àa] l[’']instant|\d+\s*(j|sem\.?|ans?)|\d+\s+(secondes?|minutes?|heures?|jours?|semaines?|mois|ans?)|(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)(\s+[àa]\s+\d{1,2}[:h]\d{2})?|(\d{1,2}|1er) (janv|févr|mars|avr|mai|juin|juil|août|sept|oct|nov|déc).*)$/i;
  const SPON=/^(Được tài trợ|Sponsored|Sponsorisé|Gesponsert|Patrocinado)/i;
  const ACT=/^(Thích|Like|J['’]aime|Trả lời|Reply|Répondre|Chia sẻ|Share|Partager|Đã chỉnh sửa|Edited|Modifié|Dịch|See translation|Voir la traduction|Xem bản dịch)$/i;
  const trunc=(s,n)=>{if(!s)return s;const a=Array.from(s);return a.length>n?a.slice(0,n).join('')+'…':s;};
  const scrollerOf=el=>{let p=el;while(p&&p!==document.body&&p!==document.documentElement){if(p.scrollHeight>p.clientHeight+20&&/auto|scroll/.test(getComputedStyle(p).overflowY))return p;p=p.parentElement;}return null;};
- const num=e=>{const g=e&&e.parentElement&&e.parentElement.parentElement;const t=g?g.innerText.trim():'';return /^[\d.,]+(?:[\s \u202f]\d{3})*(?:[\s \u202f]?[KMkmN])?$/.test(t)?t:'0';};
+ const num=e=>{const g=e&&e.parentElement&&e.parentElement.parentElement;const t=g?g.innerText.trim():'';return /^[\d.,]+(?:[ \u00a0\u202f]\d{3})*(?:[ \u00a0\u202f]?[KMkmN])?$/.test(t)?t:'0';};
  const press=(el,{events=['pointerover','mouseover','pointerdown','mousedown','pointerup','mouseup','click'],valid=()=>true}={})=>{
   const identity=()=>[location.href,el.getAttribute('role'),el.getAttribute('aria-label')||clean(el.innerText),el.getAttribute('href')].join('\n');
   const key=identity();
@@ -164,8 +164,10 @@
    if(!a.raw||a.raw.startsWith('?')||a.raw.startsWith('#'))continue;
    let url;try{url=new URL(a.href)}catch{continue}
    if(url.hostname==='l.facebook.com'&&url.searchParams.get('u')){try{url=new URL(url.searchParams.get('u'))}catch{continue}}
-   if(!/^https?:$/.test(url.protocol)||/\/hashtag\//.test(url.pathname))continue;
-   if(url.searchParams.has('comment_id')||url.searchParams.has('reply_comment_id'))continue;
+   if(!/^https?:$/.test(url.protocol))continue;
+   // Facebook's own UI links only: an external page may use the same words
+   const fb=/(^|\.)facebook\.com$/i.test(url.hostname);
+   if(fb&&(/\/hashtag\//.test(url.pathname)||url.searchParams.has('comment_id')||url.searchParams.has('reply_comment_id')))continue;
    if(/(^|\.)facebook\.com$/.test(url.hostname)&&profilePath(url.href))continue;
    for(const k of[...url.searchParams.keys()])if(/^(__cft__|__tn__|fbclid)/.test(k))url.searchParams.delete(k);
    if(!found.has(url.href))found.set(url.href,{label:clean(a.text||'')||url.hostname,url:url.href});
