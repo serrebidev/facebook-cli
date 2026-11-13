@@ -489,6 +489,28 @@ console.log('js removed-newest ok');
   assert.strictEqual(stepped2[0].time, 'November 3 at 5:30 PM');
   console.log('js feed time fallback ok');
 
+  // feed step: a shared post's original author heads an unmarked linked
+  // heading, and an ad's label is SVG text behind a chain of <use> references
+  const use = id => ({ getAttribute: n => (n === 'href' ? '#' + id : null) });
+  const svgAnchor = { ...timeAnchor, innerText: '⁠', querySelector: sel => (sel === 'svg use' ? use('S1') : null) };
+  const sharedAnchor = { innerText: 'Tanya Warner', getAttribute: n => (n === 'href' ? 'https://www.facebook.com/tanya' : null), compareDocumentPosition: () => 4 };
+  const heading = { querySelector: sel => (sel === 'a[href]' ? sharedAnchor : null), closest: () => null, compareDocumentPosition: () => 4 };
+  const profileEl3 = { innerText: 'Brandon Bracey', querySelector: () => null, closest: () => null };
+  const card3 = {
+    querySelector: sel => (sel.includes('profile_name') ? profileEl3 : sel.includes('story_message') ? msgEl : null),
+    querySelectorAll: sel => (sel === 'a[href]' ? [svgAnchor] : sel.includes('profile_name') ? [profileEl3] : sel === 'h2,h3,h4' ? [heading] : []),
+    getAttribute: () => null,
+  };
+  global.document.getElementById = id => ({ S1: { tagName: 'svg', querySelector: () => use('S2') }, S2: { tagName: 'text', textContent: 'Ad', querySelector: () => null } })[id] || null;
+  global.window = { __fb: { ...F4, postCards: () => [card3], vtext: () => ['Brandon Bracey', 'Hello world'] } };
+  new Function(fs.readFileSync(path.join(__dirname, '../js/feed.js'), 'utf8')).call(global.window);
+  const stepped3 = await global.window.__fbFeed.step();
+  assert.strictEqual(stepped3[0].author, 'Brandon Bracey / Tanya Warner');
+  assert.strictEqual(stepped3[0].time, 'Ad');
+  assert.strictEqual(stepped3[0].ad, true);
+  delete global.document.getElementById;
+  console.log('js feed shared author and svg ad label ok');
+
   // focusComposer: a mounted-but-hidden dialog (closed Notifications panel) must not block; a shown one must
   const tb = { focus() { global.document.activeElement = tb; } };
   const dlg = { isConnected: true, rects: 0, getClientRects() { return { length: this.rects }; }, innerText: 'Notifications', querySelector: () => null, querySelectorAll: () => [] };
