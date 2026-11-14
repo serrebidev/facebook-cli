@@ -7,6 +7,7 @@ READ
   feed [-n 10] [--refresh] [--full] [--urls]   next posts (scrolls on): ref, author, time, react/comment/share, text
   posts [who] [-n 10]                same, for a profile / page / group (/groups/ID)
   post-menu <post> [--press <label>]...   a post's actions menu, pressing each label in turn (submenus, dialogs such as Report): from, title, text, option<TAB>label<TAB>detail<TAB>on, done, note lines
+  saved [-n 10] [--full] [--urls]     your saved posts, same rows as feed
   view <post> [-n 10]                by, stats, text, then c<TAB>author<TAB>time<TAB>text per comment
   profile [who]                      key<TAB>value lines
   friends [who] [-n 30]              name, ref, mutual friends
