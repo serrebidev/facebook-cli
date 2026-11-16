@@ -8,7 +8,6 @@ jobs:
   verify:
     uses: ./.github/workflows/ci.yml
   build:
-    needs: verify
     strategy:
       matrix:
         include:
@@ -116,7 +115,7 @@ jobs:
         shell: bash
         run: rm -f target
   publish:
-    needs: build
+    needs: [verify, build]
     runs-on: ubuntu-latest
     steps:
       # Forgejo: actions/upload-artifact and download-artifact v4 refuse anything
