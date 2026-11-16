@@ -321,18 +321,6 @@ try{
   assert.match(await fb('page','http','open','http://example.test/'),/^url\thttp:\/\/example.test\//);
   await fb('page','http','close');
  });
- await check('external pages never poison Facebook login state by URL substring',async()=>{
-  const original=env;env={...env,FB_STATE:path.join(temp,'external-state')};
-  try{
-   for(const url of ['https://example.test/login?return=https://facebook.com','https://notfacebook.com/login','https://facebook.com.example.test/login','https://www.facebook.com/fixture/redirect-away','https://www.facebook.com/login-page/posts/100','https://www.facebook.com/checkpoint-story']){
-    const snap=await fb('page','external','open',url);assert.match(snap,/^url\thttps:\/\//);
-    if(url.endsWith('redirect-away'))assert.match(snap,/^url\thttps:\/\/example.test\/login/);
-    await fb('page','normal','open','https://www.facebook.com/fixture');await fb('page','normal','close');
-   }
-   await fb('page','external','close');await assert.rejects(()=>fb('page','login','open','https://www.facebook.com/login'),/not logged in/);
-   await assert.rejects(()=>fb('page','normal','open','https://www.facebook.com/fixture'),/session expired/);
-  }finally{try{await fb('stop')}finally{env=original}}
- });
  await check('failed publish never produces a receipt or a retry',async()=>{await evaluate('localStorage.failPublish="true";JSON.stringify(true)');await assert.rejects(()=>fb('post','Existing profile post','--to','me'));await evaluate('localStorage.removeItem("failPublish");JSON.stringify(true)')});
  await check('old posts never confirm a failed creation at any hydration state',async()=>{
   for(const flag of ['oldUrlDeferred','oldHeaderPartial','oldUnmounted']){
@@ -696,9 +684,27 @@ try{
    assert.ok(!feed.includes('Accounts with a verified badge'),'tooltip sentence gone');
   }finally{await evaluate(saved==='null'?'localStorage.removeItem("posts");JSON.stringify(true)':'localStorage.posts='+saved+';JSON.stringify(true)');}
  });
+ // The two checks below stop the fixture daemon and expire its session;
+ // every check after them would fail with 'not logged in'. They run last.
  await check('timeout drops uncertain page and close frees its name',async()=>{
   const original=env;env={...env,FB_STATE:path.join(temp,'timeout-state'),FB_TIMEOUT:'1'};
   try{await fb('page','slow','open','https://www.facebook.com/fixture');await assert.rejects(()=>fb('page','slow','eval','new Promise(()=>{})'));await assert.rejects(()=>fb('page','slow','snapshot'));assert.equal(await fb('page','slow','close'),'closed');await fb('stop')}finally{env=original}
+ });
+ await check('external pages never poison Facebook login state by URL substring',async()=>{
+  const original=env;env={...env,FB_STATE:path.join(temp,'external-state')};
+  try{
+   for(const url of ['https://example.test/login?return=https://facebook.com','https://notfacebook.com/login','https://facebook.com.example.test/login','https://www.facebook.com/fixture/redirect-away','https://www.facebook.com/login-page/posts/100','https://www.facebook.com/checkpoint-story']){
+    const snap=await fb('page','external','open',url);assert.match(snap,/^url\thttps:\/\//);
+    if(url.endsWith('redirect-away'))assert.match(snap,/^url\thttps:\/\/example.test\/login/);
+    await fb('page','normal','open','https://www.facebook.com/fixture');await fb('page','normal','close');
+   }
+   await fb('page','external','close');await assert.rejects(()=>fb('page','login','open','https://www.facebook.com/login'),/not logged in/);
+   await assert.rejects(()=>fb('page','normal','open','https://www.facebook.com/fixture'),/session expired/);
+   // The expiry tests dropped the fixture session; restore it for the checks
+   // after this one instead of racing the daemon restart on profile locks.
+   await call('Storage.setCookies',{cookies:[{name:'c_user',value:'12345',domain:'.facebook.com',path:'/'}]});
+   assert.match(await fb('status'),/logged in as 12345/);
+  }finally{try{await fb('stop')}finally{env=original}}
  });
  assert.deepEqual(failures,[],'E2E failures');
  assert.deepEqual(report.filter(x=>x.harnessError),[],'network interception errors');
