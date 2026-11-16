@@ -2,6 +2,12 @@
 
 Facebook and Messenger for LLM agents, as a single fast Rust CLI.
 
+[![Join SerrebiProjects on Telegram](https://img.shields.io/badge/Telegram-SerrebiProjects-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/SerrebiProjects)
+
+**Questions, bugs, or release news?** Join the [SerrebiProjects Telegram group](https://t.me/SerrebiProjects), the fastest place to get help.
+
+More serrebi projects: [projects.serrebiradio.com](https://projects.serrebiradio.com)
+
 `fb` drives a dedicated Chrome profile that stays logged in to your Facebook account. It reads the feed, profiles, friends and search. It reads and sends Messenger messages and images. It posts, comments, reacts and deletes. Output is built for models: one record per line, tab separated, short refs instead of long URLs, no decoration.
 
 ```
@@ -214,3 +220,7 @@ This automates a logged-in browser session. Facebook's terms restrict automated 
 Native macOS editing bindings are adapted from Playwright/Chromium under Apache
 2.0; see `THIRD_PARTY_NOTICES` and `LICENSE-APACHE-2.0`. Release archives include
 these notices alongside the CLI and its MIT license.
+
+## Credits
+
+See [CREDITS.md](CREDITS.md) for where the ideas behind this project came from, and the third-party projects it builds on.
