@@ -1339,6 +1339,15 @@ mod tests {
     }
 
     #[test]
+    fn create_response_with_a_group_permalink_is_a_receipt() {
+        let body = r#"for (;;);{"data":{"story_create":{"story":{"url":"https://www.facebook.com/groups/9/permalink/42/","default_actor":{"id":"7"}}}}}"#;
+        assert_eq!(
+            parse_created(body, "7"),
+            Ok(Some(Created::Story("/groups/9/permalink/42/".into())))
+        );
+    }
+
+    #[test]
     fn create_response_without_a_story_yet_is_pending() {
         use base64::Engine;
         let id = |s: &str| base64::engine::general_purpose::STANDARD.encode(s);
