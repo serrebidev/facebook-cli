@@ -273,6 +273,32 @@ const F = global.window.__fb;
     assert(G.AUD.me.test(t), 'AUD me should match: ' + t);
   assert(!G.AUD.friends.test('Friends except…'), 'AUD must not match a different audience');
   assert(!G.AUD.public.test('Friends'), 'AUD public must not match Friends');
+  // Friend button labels for every language the Post list knows
+  // (BlindFB #13: a Czech interface matched none of the old three-language
+  // lists, so an existing friend read as "no Add friend button").
+  for (const t of ['Add friend', 'Ajouter un ami', 'Přidat si mezi přátele', 'Přidat přítele', 'Pridať si medzi priateľov', 'Pridať priateľa', 'Freund hinzufügen', 'Dodaj do znajomych', 'Añadir a amigos', 'Добавить в друзья'])
+    assert(G.FRIEND.add.test(t), 'FRIEND add should match: ' + t);
+  for (const t of ['Friends', 'Amis', 'Přátelé', 'Priatelia', 'Freunde', 'Znajomi', 'Друзья', 'Kaverit'])
+    assert(G.FRIEND.is.test(t), 'FRIEND is should match: ' + t);
+  for (const t of ['Friend request sent', 'Cancel request', 'Žádost odeslána', 'Žiadosť odoslaná', 'Anfrage gesendet', 'Wysłano zaproszenie'])
+    assert(G.FRIEND.sent.test(t), 'FRIEND sent should match: ' + t);
+  assert(!G.FRIEND.is.test('Friends except…'), 'FRIEND is must not match a different button');
+  // friendState against a fake profile main: an existing Czech friend is
+  // "friends", not "no-button".
+  let profileButtons = [];
+  vm.runInContext('document.querySelector = () => globalThis.__fakeMain;', ctx);
+  ctx.__fakeMain = { querySelectorAll: () => profileButtons };
+  profileButtons = [button('div', 'Přátelé')];
+  assert.strictEqual(G.friendState(), 'friends', 'Czech Friends button is already friends');
+  profileButtons = [button('div', 'Pridať si medzi priateľov')];
+  assert.strictEqual(G.friendState(), 'can-add', 'Slovak Add friend button can be added');
+  profileButtons = [button('div', 'Žádost odeslána')];
+  assert.strictEqual(G.friendState(), 'requested', 'Czech sent button is a pending request');
+  profileButtons = [button('div', 'Message')];
+  assert.strictEqual(G.friendState(), 'no-button');
+  assert.strictEqual(G.friendButtonLabels(), 'Message', 'the diagnostic names the buttons on screen');
+  vm.runInContext('document.querySelector = () => null;', ctx);
+  console.log('js friend labels ok');
   console.log('js audience labels ok');
   console.log('js composer ok');
 })().catch(e => { console.error(e); process.exit(1); });

@@ -654,7 +654,29 @@ pub async fn friend_add(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
     };
     let r = async {
         b.goto(&t, &format!("https://www.facebook.com{p}")).await?;
-        let state = text_of(&b.eval(&t, "window.__fb.friendState()").await?)?;
+        // The profile header's controls mount after the page load event, so
+        // a single-shot check races them (followState waits the same way):
+        // poll until a friend button is recognized or the deadline passes.
+        let waited = b
+            .eval(
+                &t,
+                "window.__fb.waitFor(()=>{const s=window.__fb.friendState();return s!=='no-button'?s:null;},10000,200)",
+            )
+            .await?;
+        let state = match waited {
+            Value::String(s) => s,
+            _ => {
+                // Name what the profile actually shows (labels only), so an
+                // unrecognized interface language is visible in the error
+                // instead of a bare "no Add friend button" claim.
+                let labels = text_of(&b.eval(&t, "window.__fb.friendButtonLabels()").await?)
+                    .unwrap_or_default();
+                return Err(format!(
+                    "no Add friend button on this profile (buttons on this profile: {})",
+                    if labels.is_empty() { "none".to_owned() } else { labels }
+                ));
+            }
+        };
         match state.as_str() {
             "friends" => {
                 out.line("already friends");

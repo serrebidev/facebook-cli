@@ -122,12 +122,23 @@ F.AUD=AUD;
   const current=await waitFor(()=>{const b=audienceButton();return b&&(AUD[kind].test(first(b.innerText))||first(b.innerText)===want)},5000);
   return current?true:'audience change not confirmed; nothing was posted';
  };
- const FRIEND_ADD=/^(Add friend|Thêm bạn bè|Ajouter un ami|Ajouter)$/i;
- const FRIEND_SENT=/^(Friend request sent|Cancel request|Đã gửi lời mời kết bạn|Demande envoyée|Annuler la demande)$/i;
- const FRIEND_IS=/^(Friends|Bạn bè|Amis)$/i;
+ // The label sets cover every language the POST list above recognizes
+ // (BlindFB #13: these three lists knew only English, Vietnamese and French,
+ // so on a Czech interface an existing friend's Friends button matched
+ // nothing and friend-add reported "no Add friend button on this profile"
+ // for a person already in the user's friend list; the Friends set is the
+ // AUD.friends set above, which already knew Czech and Slovak).
+ const FRIEND_ADD=/^(Add friend|Thêm bạn bè|Ajouter un ami|Ajouter|Añadir a amigos|Agregar a amigos|Freund hinzufügen|Aggiungi agli amici|Vriend toevoegen|Dodaj do znajomych|Přidat si mezi přátele|Přidat přítele|Pridať si medzi priateľov|Pridať priateľa|Adicionar amigo|Adicionar aos amigos|Arkadaş ekle|Добавить в друзья|Додати в друзі|Lägg till vän|Legg til venn|Tilføj ven|Lisää kaveriksi|Lisää ystäväksi)$/i;
+ const FRIEND_SENT=/^(Friend request sent|Request sent|Cancel request|Đã gửi lời mời kết bạn|Demande envoyée|Annuler la demande|Solicitud enviada|Cancelar solicitud|Freundschaftsanfrage gesendet|Anfrage gesendet|Richiesta inviata|Annulla richiesta|Verzoek verzonden|Verzoek annuleren|Wysłano zaproszenie|Anuluj zaproszenie|Žádost odeslána|Žádost o přátelství odeslána|Zrušit žádost|Žiadosť odoslaná|Žiadosť o priateľstvo odoslaná|Zrušiť žiadosť|Solicitação enviada|Cancelar solicitação|İstek gönderildi|İsteği iptal et|Заявка отправлена|Отменить заявку|Запит надіслано|Скасувати запит|Förfrågan skickad|Avbryt förfrågan|Forespørsel sendt|Avbryt forespørsel|Anmodning sendt|Annuller anmodning|Pyyntö lähetetty|Peruuta pyyntö)$/i;
+ const FRIEND_IS=/^(Friends|Bạn bè|Amis|Amigos|Přátelé|Priatelia|Znajomi|Freunde|Amici|Vrienden|Arkadaşlar|Друзья|Друзі|Vänner|Venner|Kaverit)$/i;
+ F.FRIEND={add:FRIEND_ADD,sent:FRIEND_SENT,is:FRIEND_IS};
  const friendButton=()=>{const m=main();if(!m)return null;return [...m.querySelectorAll('[role=button]')].find(x=>{const t=btnText(x).split('\n')[0].trim();return FRIEND_ADD.test(t)||FRIEND_SENT.test(t)||FRIEND_IS.test(t);})||null;};
  F.friendState=()=>{const b=friendButton();if(!b)return 'no-button';const t=btnText(b).split('\n')[0].trim();if(FRIEND_IS.test(t))return 'friends';if(FRIEND_SENT.test(t))return 'requested';if(FRIEND_ADD.test(t))return 'can-add';return 'no-button';};
  F.friendAdd=async()=>{const st=F.friendState();if(st!=='can-add')return st;const b=friendButton();if(!b)return 'no-button';b.click();const ok=await waitFor(()=>{const s=F.friendState();return s==='requested'||s==='friends'?s:null;},8000,200);return ok||'unconfirmed';};
+ // What the profile actually shows when no friend button is recognized:
+ // labels only, so the error names the unrecognized state instead of
+ // claiming there is no Add friend button (composerState pattern).
+ F.friendButtonLabels=()=>{const m=main();if(!m)return '';return [...new Set([...m.querySelectorAll('[role=button]')].map(b=>btnText(b).split('\n')[0].trim()).filter(Boolean))].slice(0,14).join(' | ');};
  // ---- group join / leave: the header button cycles Join group -> Requested
  // (private, approval needed) or Joined; leaving goes through the Joined menu
  const G_JOIN=/^(Join group|Join|Tham gia nhóm|Rejoindre le groupe|Rejoindre)$/i;
