@@ -649,7 +649,7 @@ console.log('js removed-newest ok');
   const profileEl3 = { innerText: 'Brandon Bracey', querySelector: () => null, closest: () => null };
   const card3 = {
     querySelector: sel => (sel.includes('profile_name') ? profileEl3 : sel.includes('story_message') ? msgEl : null),
-    querySelectorAll: sel => (sel === 'a[href]' ? [svgAnchor] : sel.includes('profile_name') ? [profileEl3] : sel === 'h2,h3,h4' ? [heading] : []),
+    querySelectorAll: sel => (sel === 'a[href]' ? [svgAnchor] : sel.includes('profile_name') ? [profileEl3] : sel === 'h2,h3,h4,h5,h6' ? [heading] : []),
     getAttribute: () => null,
   };
   global.document.getElementById = id => ({ S1: { tagName: 'svg', querySelector: () => use('S2') }, S2: { tagName: 'text', textContent: 'Ad', querySelector: () => null } })[id] || null;
