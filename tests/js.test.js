@@ -156,6 +156,47 @@ const F = global.window.__fb;
   console.log('js follow preparation ok');
 })().catch(e => { console.error(e); process.exit(1); });
 
+// composeOpen on a Czech profile page (BlindFB #16): the prompt is named in
+// Czech, and the card's top row is the owner's text-less avatar button beside
+// the prompt, with the labelled shortcuts in a second row. The old shape
+// check stopped climbing at that two-button row and rejected the card, so
+// posting fell through to a header button and reported "composer did not
+// open (dialog "Michal Suchý", buttons: Zavřít)".
+(async () => {
+  const vm = require('vm');
+  async function open(prompt, labelled) {
+    let opened = false;
+    const mk = (text, label) => ({ innerText: text, parentElement: null,
+      getAttribute: n => n === 'aria-label' ? label : null,
+      closest: () => null, isConnected: true, click() { if (this === trigger) opened = true; } });
+    const avatar = mk('', 'Michal Suchý');
+    const trigger = mk(prompt, null);
+    const cuts = ['Živé video', 'Fotka/video', 'Pocit/aktivita'].map(t => mk('', labelled ? t : null));
+    const buttons = [avatar, trigger, ...cuts];
+    const card = { querySelectorAll: () => buttons };
+    buttons.forEach(b => { b.parentElement = card; });
+    const textbox = { focus() {} };
+    const publish = { innerText: 'Zveřejnit', disabled: true, getAttribute: () => null };
+    const dialog = { querySelector: s => s === '[role=textbox]' ? textbox : s.includes('file') ? {} : null,
+      querySelectorAll: () => [publish] };
+    const main = { querySelectorAll: s => s === '[role=button]' ? buttons : [] };
+    const G = { clean: s => String(s || '').trim(), vtext: () => [], visible: () => true,
+      enabled: e => !e.disabled, sleep: async () => {},
+      waitFor: async f => { for (let i = 0; i < 60; i++) { const v = await f(); if (v) return v; } return null; } };
+    const ctx = vm.createContext({ window: { __fb: G }, location: { pathname: '/' },
+      document: { documentElement: { lang: 'cs' },
+        querySelector: s => s === '[role=main]' ? main : null,
+        querySelectorAll: s => s === '[role=dialog]' ? (opened ? [dialog] : []) : [] } });
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '../js/act.js'), 'utf8'), ctx);
+    return G.composeOpen();
+  }
+  assert.strictEqual(await open('Co máte na mysli, Michale?', true), true, 'Czech prompt opens the composer');
+  assert.strictEqual(await open('Čo máte na mysli, Michal?', true), true, 'Slovak prompt opens the composer');
+  assert.strictEqual(await open('Some new prompt wording', true), true, 'avatar-row card opens by shape in an unknown language');
+  assert.notStrictEqual(await open('Some new prompt wording', false), true, 'unlabelled shortcuts are not a composer card');
+  console.log('js composeOpen profile card ok');
+})().catch(e => { console.error(e); process.exit(1); });
+
 // Composer timeouts use an immediate waitFor so every failure state is checked without a minute's delay.
 (async () => {
   const vm = require('vm');

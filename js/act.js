@@ -20,14 +20,19 @@
  };
  // In any language the composer card is its text button followed by labelled
  // shortcuts (Live video, Photo/video, ...). Menu buttons such as a profile's
- // "Share a thought..." note are not it.
+ // "Share a thought..." note are not it. On a profile page the card's top row
+ // is the owner's avatar button (no text) beside the text button, with the
+ // shortcuts in a second row: the first ancestor holding two buttons is
+ // that row alone, so climb until the card holds the shortcuts too, and
+ // allow text-less buttons (the avatar) before the trigger.
  const isComposerTrigger=b=>{
   if(window.__fbPostGroup&&(!F.visible(b)||b.closest('[aria-hidden=true],[hidden],[inert]')))return false;
   if(b.getAttribute('aria-label')||b.getAttribute('aria-haspopup')||btnText(b).length<=6)return false;
   let card=b.parentElement;
-  while(card&&card.querySelectorAll('[role=button]').length<2)card=card.parentElement;
+  while(card&&card.querySelectorAll('[role=button]').length<3)card=card.parentElement;
   const buttons=card?[...card.querySelectorAll('[role=button]')]:[];
-  return buttons[0]===b&&buttons.length>=3&&buttons.length<=5&&buttons.slice(1).every(x=>x.getAttribute('aria-label'));
+  const i=buttons.indexOf(b);
+  return i>=0&&buttons.length<=6&&buttons.length-i>=3&&buttons.slice(0,i).every(x=>!btnText(x))&&buttons.slice(i+1).every(x=>x.getAttribute('aria-label'));
  };
  F.composeGroupCheck=group=>location.pathname.replace(/\/$/,'')===group?true:'the selected group is no longer open; nothing was posted';
  F.composeOpen=async(group=null)=>{
@@ -35,10 +40,15 @@
   if(group){const checked=F.composeGroupCheck(group);if(checked!==true)return checked;}
   const m=await waitFor(()=>main(),15000);
   if(!m)return 'no main';
+  // The prompt list covers every language the POST list below recognizes
+  // (BlindFB #16: a Czech interface matched none of them, the structural
+  // fallback missed the profile card's avatar row, and the region fallback
+  // below then clicked a header button whose dialog is titled with the
+  // owner's name and holds only Close — "composer did not open").
   const trigger=await waitFor(()=>{
    const all=[...m.querySelectorAll('[role=button]')];
    if(group)return all.find(isComposerTrigger)||null;
-   const named=all.find(b=>/^(What.s on your mind|Bạn đang nghĩ gì|Exprimez-vous|Que voulez-vous dire|Что у вас нового|О чём вы думаете|Що у вас нового|Mida sa mõtled)/i.test(btnText(b)))||all.find(isComposerTrigger);
+   const named=all.find(b=>/^(What.s on your mind|Bạn đang nghĩ gì|Exprimez-vous|Que voulez-vous dire|Что у вас нового|О чём вы думаете|Що у вас нового|Mida sa mõtled|Co máte na mysli|Čo máte na mysli|Was machst du gerade|Qué estás pensando|Que estás pensando|A cosa stai pensando|Co słychać|No que você está pensando|Em que você está pensando|Ne düşünüyorsun|Vad tänker du på|Hva tenker du på|Hvad tænker du på|Mitä mietit|Wat ben je aan het doen)/i.test(btnText(b)))||all.find(isComposerTrigger);
    if(named)return named;
    const regs=[...m.querySelectorAll('[role=region]')];
    for(const r of regs){const h=r.querySelector('h1,h2,h3,h4');if(!h)continue;const b=[...r.querySelectorAll('[role=button]')].find(b=>btnText(b).length>6&&!b.getAttribute('aria-haspopup'));if(b)return b;}
