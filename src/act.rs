@@ -87,14 +87,18 @@ fn post_group(a: &crate::ops::Args) -> Res<Option<String>> {
 }
 
 pub async fn post(d: &Daemon, args: &[String], cwd: &str, out: &Out) -> Res<()> {
-    let a = parse(args, &["img", "video", "to", "group"], &["dry"])?;
+    let a = parse(args, &["img", "video", "to", "group"], &["dry", "anonymous"])?;
     let group = post_group(&a)?;
+    let anonymous = a.flag("anonymous");
+    if anonymous && group.is_none() {
+        return Err("--anonymous needs --group: only groups offer anonymous posts".into());
+    }
     let text = a.pos.join(" ");
     let imgs = a.opts_all("img");
     let videos = a.opts_all("video");
     if text.is_empty() && imgs.is_empty() && videos.is_empty() {
         return Err(
-            "usage: post <text> [--img file]... [--video file]... [--to public|friends|me | --group URL]".into(),
+            "usage: post <text> [--img file]... [--video file]... [--to public|friends|me | --group URL [--anonymous]]".into(),
         );
     }
     let audience = a.opt("to").map(|s| match s {
@@ -127,6 +131,10 @@ pub async fn post(d: &Daemon, args: &[String], cwd: &str, out: &Out) -> Res<()> 
         };
         b.goto(&t, &format!("https://www.facebook.com{destination}")).await?;
         ok(&b.eval(&t, &format!("window.__fb.composeOpen({})", json!(group))).await?)?;
+        // Before any text: an empty composer keeps Post disabled while the switch is pressed.
+        if anonymous {
+            ok(&b.eval(&t, "window.__fb.composeAnonymous()").await?)?;
+        }
         if !text.is_empty() {
             ok(&b.eval(&t, "window.__fb.composeFocus()").await?)?;
             type_into(&b, &t, &text).await?;
@@ -179,17 +187,19 @@ pub async fn post(d: &Daemon, args: &[String], cwd: &str, out: &Out) -> Res<()> 
             // dialog to close, and events left unread that long can overflow the queue. FB's
             // composer may also take minutes to answer on a slow connection.
             let create = async {
-                tokio::time::timeout(Duration::from_secs(150), created_post(&b, &t, &uid, &mut events))
+                tokio::time::timeout(Duration::from_secs(150), created_post(&b, &t, &uid, anonymous, &mut events))
                     .await
                     .map_err(|_| "creation response timed out".to_string())?
             };
             let ((), created) = tokio::try_join!(press, create)?;
             match created {
                 Created::Story(path) => {
-                    if !read_back(&b, &t, &path, &text, 15000).await? {
+                    let seen = read_back(&b, &t, &path, &text, 15000).await?;
+                    // An anonymous post can wait for admins: unseen is pending, never a reason to retry.
+                    if !seen && !anonymous {
                         return Err("created post content could not be read back".into());
                     }
-                    Ok((true, Some(path)))
+                    Ok((seen, Some(path)))
                 }
                 Created::Pending(path) => {
                     let published = match &path {
@@ -257,7 +267,8 @@ fn future_post_path(story_id: &str, post_id: &Value, uid: &str) -> Res<Option<St
 }
 
 /// None means a transient failure: Facebook's composer resubmits those by itself.
-fn parse_created(body: &str, uid: &str) -> Res<Option<Created>> {
+/// An anonymous post is authored by the group's anonymous actor, so its actor proves nothing.
+fn parse_created(body: &str, uid: &str, anonymous: bool) -> Res<Option<Created>> {
     let mut paths = std::collections::HashSet::new();
     let mut pending = None;
     for line in body
@@ -278,11 +289,11 @@ fn parse_created(body: &str, uid: &str) -> Res<Option<Created>> {
         let story = &create["story"];
         if story.is_null() {
             if let Some(id) = create["story_id"].as_str().filter(|id| !id.is_empty()) {
-                pending = Some(future_post_path(id, &create["post_id"], uid)?);
+                pending = Some(if anonymous { None } else { future_post_path(id, &create["post_id"], uid)? });
             }
             continue;
         }
-        if story["default_actor"]["id"].as_str() != Some(uid) {
+        if !anonymous && story["default_actor"]["id"].as_str() != Some(uid) {
             return Err("creation actor mismatch".into());
         }
         let path = crate::ops::fb_path(story["url"].as_str().ok_or("created story URL missing")?)
@@ -320,6 +331,7 @@ async fn created_post(
     b: &Browser,
     t: &Tab,
     uid: &str,
+    anonymous: bool,
     events: &mut tokio::sync::broadcast::Receiver<crate::cdp::Event>,
 ) -> Res<Created> {
     let mut request: Option<String> = None;
@@ -373,7 +385,7 @@ async fn created_post(
         } else {
             raw
         };
-        match parse_created(body, uid)? {
+        match parse_created(body, uid, anonymous)? {
             Some(created) => return Ok(created),
             None => request = None,
         }
@@ -1352,16 +1364,27 @@ mod tests {
         let body = r#"for (;;);{"data":{"story_create":{"story":{"url":"https://www.facebook.com/a/posts/pfbid1","default_actor":{"id":"7"}}}}}
 {"label":"later","path":["story_create"],"data":{"x":1}}"#;
         assert_eq!(
-            parse_created(body, "7"),
+            parse_created(body, "7", false),
             Ok(Some(Created::Story("/a/posts/pfbid1".into())))
         );
+    }
+
+    #[test]
+    fn anonymous_post_receipts_do_not_expect_the_viewer_as_author() {
+        use base64::Engine;
+        let story = r#"for (;;);{"data":{"story_create":{"story":{"url":"https://www.facebook.com/groups/9/permalink/42/","default_actor":{"id":"900"}}}}}"#;
+        assert_eq!(parse_created(story, "7", true), Ok(Some(Created::Story("/groups/9/permalink/42/".into()))));
+        assert!(parse_created(story, "7", false).is_err(), "a named post still checks its author");
+        let id = base64::engine::general_purpose::STANDARD.encode("S:_I900:55:55");
+        let held = json!({"data":{"story_create":{"story":null,"story_id":id,"post_id":"55"}}}).to_string();
+        assert_eq!(parse_created(&held, "7", true), Ok(Some(Created::Pending(None))));
     }
 
     #[test]
     fn create_response_with_a_group_permalink_is_a_receipt() {
         let body = r#"for (;;);{"data":{"story_create":{"story":{"url":"https://www.facebook.com/groups/9/permalink/42/","default_actor":{"id":"7"}}}}}"#;
         assert_eq!(
-            parse_created(body, "7"),
+            parse_created(body, "7", false),
             Ok(Some(Created::Story("/groups/9/permalink/42/".into())))
         );
     }
@@ -1371,7 +1394,7 @@ mod tests {
         use base64::Engine;
         let id = |s: &str| base64::engine::general_purpose::STANDARD.encode(s);
         let pending = |create: Value| {
-            parse_created(&json!({"data":{"story_create":create}}).to_string(), "7")
+            parse_created(&json!({"data":{"story_create":create}}).to_string(), "7", false)
         };
         let want = |post: &str| Ok(Some(Created::Pending(Some(format!("/7/posts/{post}")))));
         assert_eq!(
@@ -1404,7 +1427,7 @@ mod tests {
             r#"{"data":{}}"#,
         ] {
             assert_eq!(
-                parse_created(body, "7"),
+                parse_created(body, "7", false),
                 Err("unique creation identity missing".to_string())
             );
         }
@@ -1457,11 +1480,11 @@ mod tests {
     #[test]
     fn create_response_errors_tell_transient_from_final() {
         assert_eq!(
-            parse_created(r#"{"errors":[{"is_transient":true}]}"#, "7"),
+            parse_created(r#"{"errors":[{"is_transient":true}]}"#, "7", false),
             Ok(None)
         );
         assert_eq!(
-            parse_created(r#"{"errors":[{"message":"no"}]}"#, "7"),
+            parse_created(r#"{"errors":[{"message":"no"}]}"#, "7", false),
             Err("Facebook rejected the creation request".to_string())
         );
     }

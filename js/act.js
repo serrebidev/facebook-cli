@@ -34,9 +34,35 @@
   const i=buttons.indexOf(b);
   return i>=0&&buttons.length<=6&&buttons.length-i>=3&&buttons.slice(0,i).every(x=>!btnText(x))&&buttons.slice(i+1).every(x=>x.getAttribute('aria-label'));
  };
+ // A group's composer has one switch: Post anonymously. Its prompt changes once Facebook has
+ // really swapped the author, which is what proves the switch is on in any language.
+ const anonSwitch=()=>{const d=F.composeDialog();const all=d?[...d.querySelectorAll('[role=switch]')].filter(F.visible):[];return all.length===1?all[0]:null;};
+ const anonPrompt=()=>F.composeDialog()?.querySelector('[role=textbox]')?.getAttribute('aria-label')||'';
+ const anonOn=()=>anonSwitch()?.getAttribute('aria-checked')==='true';
+ F.composeAnonymous=async()=>{
+  const d=F.composeDialog();if(!d)return 'no composer; nothing was posted';
+  const s=await waitFor(anonSwitch,5000,100);
+  if(!s)return 'this group does not offer anonymous posts; nothing was posted';
+  if(!anonOn()){
+   const named=anonPrompt(),known=new Set(actionControls(d));
+   s.click();
+   // The first use shows a notice inside the composer: its one new labelled action accepts it.
+   // Post existed before the switch was pressed, so it can never be taken for that action.
+   let accepted=null;
+   const on=await waitFor(()=>{
+    if(anonOn()&&anonPrompt()!==named)return true;
+    const fresh=actionControls(d).filter(b=>!known.has(b)&&F.visible(b)&&F.enabled(b)&&btnText(b));
+    if(!accepted&&fresh.length===1){accepted=fresh[0];accepted.click();}
+    return null;
+   },15000,150);
+   if(!on)return 'Facebook did not turn on anonymous posting; nothing was posted'+composerState(d);
+  }
+  window.__fbAnonymous=anonPrompt();
+  return true;
+ };
  F.composeGroupCheck=group=>location.pathname.replace(/\/$/,'')===group?true:'the selected group is no longer open; nothing was posted';
  F.composeOpen=async(group=null)=>{
-  window.__fbPostGroup=group;
+  window.__fbPostGroup=group;window.__fbAnonymous=null;
   if(group){const checked=F.composeGroupCheck(group);if(checked!==true)return checked;}
   const m=await waitFor(()=>main(),15000);
   if(!m)return 'no main';
@@ -72,7 +98,7 @@
  };
  F.composeDialog=()=>{const exposed=d=>!window.__fbPostGroup||F.visible(d)&&!d.closest('[aria-hidden=true],[hidden],[inert]');const k=window.__fbComposer;return k&&k.isConnected&&exposed(k)?k:dialogs().find(d=>exposed(d)&&d.querySelector('[role=textbox]'));};
  F.composeFocus=()=>{const d=F.composeDialog();const tb=d&&d.querySelector('[role=textbox]');if(!tb)return false;tb.focus();return true;};
- F.composeCheck=text=>{if(window.__fbPostGroup){const checked=F.composeGroupCheck(window.__fbPostGroup);if(checked!==true)return checked;}const d=F.composeDialog();if(!d)return 'no composer; nothing was posted';const tb=d.querySelector('[role=textbox]');if(!tb&&window.__fbComposer)return true;const draft=clean(tb.innerText);return draft===clean(text)?true:!draft?'composer text is empty; nothing was posted':'composer text does not match the requested text; nothing was posted';};
+ F.composeCheck=text=>{if(window.__fbAnonymous&&(!anonOn()||anonPrompt()!==window.__fbAnonymous))return 'anonymous posting is no longer on; nothing was posted';if(window.__fbPostGroup){const checked=F.composeGroupCheck(window.__fbPostGroup);if(checked!==true)return checked;}const d=F.composeDialog();if(!d)return 'no composer; nothing was posted';const tb=d.querySelector('[role=textbox]');if(!tb&&window.__fbComposer)return true;const draft=clean(tb.innerText);return draft===clean(text)?true:!draft?'composer text is empty; nothing was posted':'composer text does not match the requested text; nothing was posted';};
  F.composeAttach=async(name,mime,b64)=>{
   const d=F.composeDialog();const inp=d&&d.querySelector('input[type=file]');
   if(!inp)return 'no file input';
