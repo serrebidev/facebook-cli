@@ -585,20 +585,8 @@ pub async fn comment(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
 }
 
 /// How a selected reaction button starts, per language ("Remove Love from …").
-const REMOVE_PREFIXES: [&str; 4] = ["remove ", "retirer ", "supprimer ", "удалить "];
-/// What follows the reaction name in a selected button ("… from <author>'s post",
-/// French "… de la publication de <author>").
-const TARGET_SEPARATORS: [&str; 5] = [
-    " from ",
-    " de la publication",
-    " à la publication",
-    " sur la publication",
-    // Russian: "Удалить Ух ты! из публикации <author>"
-    " из публикации",
-];
+const REMOVE_PREFIXES: [&str; 5] = ["remove ", "retirer ", "supprimer ", "удалить ", "eemalda "];
 
-/// The reaction precedes the author in "Remove Love from <author>'s post".
-/// Keep localized suffix matching ("Yêu thích" also ends with "thích").
 /// A picker entry's reaction name. A selected Like turns its entry into a removal
 /// in some languages (Russian: "Удалить реакцию «Нравится»"), which must still
 /// name Like for the label checks below.
@@ -609,24 +597,30 @@ fn picker_name(label: &str) -> String {
         .to_owned()
 }
 
+/// The reaction a selected button names. After a known removal word the name comes first,
+/// whatever wording about the post follows it ("Remove Love from <author>'s post", Estonian
+/// "Eemalda Ohhoo! kasutaja <author> postitusest"), so an author's name cannot match.
+/// Other languages keep suffix matching ("Yêu thích" also ends with "thích").
 fn current_reaction(label: &str, picker: &[String]) -> Option<usize> {
     let l = label.to_lowercase();
-    let reaction = REMOVE_PREFIXES
+    let longest = |matches: &dyn Fn(&str) -> bool| {
+        picker
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| !p.is_empty() && matches(p))
+            .max_by_key(|(_, p)| p.len())
+            .map(|(i, _)| i)
+    };
+    REMOVE_PREFIXES
         .iter()
         .find_map(|prefix| l.strip_prefix(prefix))
         .and_then(|rest| {
-            TARGET_SEPARATORS
-                .iter()
-                .filter_map(|separator| rest.split_once(separator).map(|(reaction, _)| reaction))
-                .min_by_key(|reaction| reaction.len())
+            longest(&|p| {
+                rest.strip_prefix(p)
+                    .is_some_and(|after| after.is_empty() || after.starts_with(' '))
+            })
         })
-        .unwrap_or(l.as_str());
-    picker
-        .iter()
-        .enumerate()
-        .filter(|(_, p)| !p.is_empty() && reaction.ends_with(p.as_str()))
-        .max_by_key(|(_, p)| p.len())
-        .map(|(i, _)| i)
+        .or_else(|| longest(&|p| l.ends_with(p)))
 }
 
 /// Send a friend request from a profile page. Idempotent: an existing
@@ -720,7 +714,10 @@ fn reaction_neutral(label: &str, picker: &[String]) -> bool {
                 || l.starts_with(&format!("react with {first} to "))
                 || l.starts_with(&format!("réagir avec {first} à "))
                 // Russian: "Поставить Нравится публикации <author>"
-                || l.starts_with(&format!("поставить {first} ")))
+                || l.starts_with(&format!("поставить {first} "))
+                // Estonian: "Reageeri kasutaja <author> postitusele reaktsiooniga Meeldib"
+                || (l.starts_with("reageeri kasutaja ")
+                    && l.ends_with(&format!(" postitusele reaktsiooniga {first}"))))
     })
 }
 
@@ -1559,6 +1556,28 @@ mod tests {
             &picker,
             0
         ));
+    }
+
+    #[test]
+    fn estonian_reaction_labels() {
+        // The reported button, and the neutral form Facebook shows before any reaction.
+        let picker: Vec<String> = ["meeldib", "armastan", "hoolin", "hahaa!", "ohhoo!", "kurb", "vihane"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let reported = "Eemalda Ohhoo! kasutaja Ласнамяэ / Lasnamäe postitusest";
+        assert!(!reaction_neutral(reported, &picker));
+        assert_eq!(current_reaction(reported, &picker), Some(4));
+        assert!(reaction_landed(reported, &picker, 4));
+        assert!(!reaction_landed(reported, &picker, 0));
+        // An author named after a reaction changes nothing.
+        assert_eq!(current_reaction("Eemalda Meeldib kasutaja Kurb postitusest", &picker), Some(0));
+        assert_eq!(current_reaction("Eemalda Kurb", &picker), Some(5));
+        let neutral = "Reageeri kasutaja Ласнамяэ / Lasnamäe postitusele reaktsiooniga Meeldib";
+        assert!(reaction_neutral(neutral, &picker));
+        for idx in 0..picker.len() {
+            assert!(!reaction_landed(neutral, &picker, idx), "{idx}");
+        }
     }
 
     #[test]
