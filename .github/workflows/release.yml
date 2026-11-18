@@ -12,10 +12,10 @@ jobs:
     strategy:
       matrix:
         include:
-          - { os: wsl-linux, target: x86_64-unknown-linux-musl, asset: fb-x86_64-linux }
-          # No arm runner exists: the x86 WSL runner cross-builds aarch64. fb is pure
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, asset: fb-x86_64-linux }
+          # No arm runner exists: the x86 Linux runner cross-builds aarch64. fb is pure
           # Rust (no C), so rust-lld links it against Rust's bundled musl.
-          - { os: wsl-linux, target: aarch64-unknown-linux-musl, asset: fb-aarch64-linux }
+          - { os: ubuntu-latest, target: aarch64-unknown-linux-musl, asset: fb-aarch64-linux }
           - { os: macos-15, target: aarch64-apple-darwin, asset: fb-aarch64-darwin }
           - { os: windows-latest, target: x86_64-pc-windows-msvc, asset: fb-x86_64-windows }
     runs-on: ${{ matrix.os }}
@@ -28,57 +28,6 @@ jobs:
           targets: ${{ matrix.target }}
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
-      # Host runners (macOS, Windows) start every job in a fresh,
-      # randomly named work folder, so rust-cache never matched
-      # there: its cache version hashes the absolute target path
-      # ("No cache found", full rebuilds every run). target/ points
-      # at a fixed folder on the runner instead and builds reuse the
-      # previous run directly. Two jobs on one folder take turns:
-      # cargo locks its target folder.
-      # Owner-approved 2026-11-10 (same fix as BlindRSS-Rust df47812).
-      # CARGO_TARGET_DIR is the folder's real path: CMake caches
-      # absolute paths, and the path through the link changes
-      # with every work folder ("CMakeCache.txt directory ... is
-      # different"). The link keeps target/... references working.
-      # ponytail: the folder only grows; delete it on the runner
-      # when disk gets tight (next build is cold once).
-      - name: Persistent target folder (Windows host runner)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $dir = 'C:/forgejo-runner/cargo-target/facebook-cli/build'
-          New-Item -ItemType Directory -Force $dir | Out-Null
-          if (Test-Path target) { cmd /c rmdir /s /q target }
-          New-Item -ItemType Junction -Path target -Target $dir | Out-Null
-          Add-Content -Path $env:GITHUB_ENV -Value "CARGO_TARGET_DIR=$dir"
-
-      - name: Persistent target folder (macOS host runner)
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          dir="$HOME/forgejo-runner/cargo-target/facebook-cli/build"
-          mkdir -p "$dir"
-          rm -rf target
-          ln -s "$dir" target
-          echo "CARGO_TARGET_DIR=$dir" >> "$GITHUB_ENV"
-
-      # Linux legs run on desknasbox's WSL (runner wsl-linux-x64) in a job
-      # container. The runner mounts persistent volumes at
-      # /root/forgejo-runner/cargo-target and cargo's registry and git
-      # caches, so target/ points at a fixed folder there exactly as on
-      # the host runners, and the job image ships the apt packages and
-      # Rust (owner request 2026-11-11: Linux as fast as the other legs).
-      # CARGO_TARGET_DIR is the real path: CMake caches absolute paths.
-      - name: Persistent target folder (Linux WSL runner)
-        if: matrix.os == 'wsl-linux'
-        shell: bash
-        run: |
-          dir="$HOME/forgejo-runner/cargo-target/facebook-cli/build"
-          mkdir -p "$dir"
-          rm -rf target
-          ln -s "$dir" target
-          echo "CARGO_TARGET_DIR=$dir" >> "$GITHUB_ENV"
-
       - name: Check tag matches package version
         shell: bash
         run: test "$GITHUB_REF_NAME" = "v$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
@@ -88,9 +37,7 @@ jobs:
       - if: runner.os == 'Windows'
         shell: pwsh
         run: Compress-Archive -Path target/${{ matrix.target }}/release/fb.exe,LICENSE,LICENSE-APACHE-2.0,THIRD_PARTY_NOTICES -DestinationPath ${{ matrix.asset }}.zip
-      # Forgejo: actions/upload-artifact and download-artifact v4 refuse anything
-      # but github.com (GHESNotSupportedError); Forgejo's builds speak its API.
-      - uses: https://code.forgejo.org/forgejo/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
           path: |
@@ -98,34 +45,15 @@ jobs:
             ${{ matrix.asset }}.zip
           if-no-files-found: error
 
-      # Drop only the link, never the shared folder behind it,
-      # before the runner deletes the work folder.
       - name: Cargo clean (free disk)
         if: always()
         continue-on-error: true
         run: cargo clean
-      - name: Unlink persistent target folder (Windows)
-        if: always() && runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          if (Test-Path target) { (Get-Item target).Delete() }
-
-      - name: Unlink persistent target folder (macOS)
-        if: always() && runner.os == 'macOS'
-        shell: bash
-        run: rm -f target
-
-      - name: Unlink persistent target folder (Linux)
-        if: always() && matrix.os == 'wsl-linux'
-        shell: bash
-        run: rm -f target
   publish:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      # Forgejo: actions/upload-artifact and download-artifact v4 refuse anything
-      # but github.com (GHESNotSupportedError); Forgejo's builds speak its API.
-      - uses: https://code.forgejo.org/forgejo/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           path: dist
           pattern: fb-*
@@ -135,10 +63,37 @@ jobs:
         run: |
           test "$(find . -maxdepth 1 -type f | wc -l)" -eq 4
           sha256sum fb-*.tar.gz fb-*.zip > SHA256SUMS
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*
-          fail_on_unmatched_files: true
-          # Not generate_release_notes: Forgejo has no generate-notes endpoint,
-          # so creating the release failed with 405.
-          body: "BlindFB backend ${{ github.ref_name }}: see the commits on the blindfb branch since the previous tag."
+      # Releases land on Forgejo (the updater reads there). The job
+      # token cannot speak to that API, so the Forgejo release API
+      # takes the assembled dist/ (owner 2026-11-18).
+      - name: Publish the Forgejo release
+        shell: bash
+        env:
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          api="https://git.serrebiradio.com/api/v1/repos/serrebi/facebook-cli"
+          h="Authorization: token $FORGEJO_TOKEN"
+          body="BlindFB backend $TAG: see the commits on the blindfb branch since the previous tag."
+          if release="$(curl -sf -H "$h" "$api/releases/tags/$TAG")"; then
+            id="$(echo "$release" | jq -r .id)"
+            jq -n --arg body "$body" '{body: $body}' |
+              curl -sf -o /dev/null -X PATCH -H "$h" -H 'Content-Type: application/json' -d @- "$api/releases/$id"
+          else
+            release="$(jq -n --arg tag "$TAG" --arg name "facebook-cli $TAG" --arg body "$body" \
+              '{tag_name: $tag, name: $name, body: $body, draft: true}' |
+              curl -sf -H "$h" -H 'Content-Type: application/json' -d @- "$api/releases")"
+            id="$(echo "$release" | jq -r .id)"
+          fi
+          for file in dist/fb-*.tar.gz dist/fb-*.zip dist/SHA256SUMS; do
+            name="$(basename "$file")"
+            old="$(echo "$release" | jq -r --arg n "$name" '.assets[]? | select(.name == $n) | .id')"
+            [ -z "$old" ] || curl -sf -X DELETE -H "$h" "$api/releases/$id/assets/$old"
+            curl -sf -o /dev/null -H "$h" -F "attachment=@$file" "$api/releases/$id/assets?name=$name"
+            echo "Attached $name"
+          done
+          curl -sf -o /dev/null -X PATCH -H "$h" -H 'Content-Type: application/json' \
+            -d '{"draft": false, "prerelease": false}' "$api/releases/$id"
+          latest="$(curl -sf "$api/releases/latest" | jq -r .tag_name)"
+          [ "$latest" = "$TAG" ]
