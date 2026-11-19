@@ -4,6 +4,12 @@ name: release
 # Push the tag, then run: gh workflow run release.yml --repo serrebidev/facebook-cli --ref vX.Y.Z
 on:
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and sign only; publish nothing
+        required: false
+        default: false
+        type: boolean
 permissions:
   contents: write
 jobs:
@@ -31,6 +37,7 @@ jobs:
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
       - name: Check tag matches package version
+        if: ${{ !inputs.dry_run }}
         shell: bash
         run: test "$GITHUB_REF_NAME" = "v$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
       - run: cargo build --release --locked --target ${{ matrix.target }}
@@ -69,6 +76,7 @@ jobs:
       # token cannot speak to that API, so the Forgejo release API
       # takes the assembled dist/ (owner 2026-11-18).
       - name: Publish the Forgejo release
+        if: ${{ !inputs.dry_run }}
         shell: bash
         env:
           FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
