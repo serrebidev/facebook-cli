@@ -1,7 +1,8 @@
 name: release
+# Manual only: the Forgejo-to-GitHub sync disables GitHub workflows with
+# automatic triggers.
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
 permissions:
   contents: write
 jobs:
