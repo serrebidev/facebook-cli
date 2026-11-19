@@ -1,7 +1,9 @@
 name: release
+# Manual only: the Forgejo-to-GitHub sync disables GitHub workflows with
+# automatic triggers.
+# Push the tag, then run: gh workflow run release.yml --repo serrebidev/facebook-cli --ref vX.Y.Z
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
 permissions:
   contents: write
 jobs:
