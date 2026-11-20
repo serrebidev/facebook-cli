@@ -44,36 +44,63 @@ fn flags(c: &Chat) -> String {
 
 /// `complete`: the scan actually reached the end of the chat list (not just a time budget or a
 /// stall that gave up partway). Only then may "fewer rows than asked for" be read as "that is everything".
+/// Scan the chat list grid on the tab's current page (inbox or archived view alike).
+async fn scan_open_list(b: &Browser, t: &Tab, n: usize) -> Res<(Vec<Chat>, bool)> {
+    let v = b
+        .eval(t, &format!("window.__fb.chats({n}).then(JSON.stringify)"))
+        .await?;
+    let v: Value = serde_json::from_str(v.as_str().unwrap_or("{}")).map_err(|e| e.to_string())?;
+    if let Some(e) = v["err"].as_str() {
+        return Err(e.to_string());
+    }
+    let list = v["chats"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|c| Chat {
+                    path: c["href"].as_str().unwrap_or("").to_string(),
+                    name: c["name"].as_str().unwrap_or("").to_string(),
+                    preview: c["preview"].as_str().unwrap_or("").to_string(),
+                    time: c["time"].as_str().unwrap_or("").to_string(),
+                    unread: c["unread"] == Value::Bool(true),
+                    group: c["group"] == Value::Bool(true),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok((list, v["complete"] == Value::Bool(true)))
+}
+
 async fn fetch_chats(b: &std::sync::Arc<Browser>, n: usize) -> Res<(Vec<Chat>, bool)> {
     let t = b.acquire_kind("messages").await?;
     let r = async {
         if t.kind != "messages" {
             b.goto(&t, "https://www.facebook.com/messages/t/").await?;
         }
-        let v = b
-            .eval(&t, &format!("window.__fb.chats({n}).then(JSON.stringify)"))
+        scan_open_list(b, &t, n).await
+    }
+    .await;
+    b.release_as(t, if r.is_ok() { "messages" } else { "" })
+        .await;
+    r
+}
+
+/// Archived chats live on their own view, outside the inbox list and its cache.
+/// Arrival must be proven: if Facebook redirects back to the inbox, the inbox
+/// grid must never be read as "the archived list".
+async fn fetch_archived_chats(b: &std::sync::Arc<Browser>, n: usize) -> Res<(Vec<Chat>, bool)> {
+    let t = b.acquire_kind("messages").await?;
+    let r = async {
+        b.goto(&t, "https://www.facebook.com/messages/archived/")
             .await?;
-        let v: Value =
-            serde_json::from_str(v.as_str().unwrap_or("{}")).map_err(|e| e.to_string())?;
-        if let Some(e) = v["err"].as_str() {
-            return Err(e.to_string());
+        let at = b.eval(&t, "location.pathname").await?;
+        let at = at.as_str().unwrap_or("");
+        if !at.contains("archived") {
+            return Err(format!(
+                "Facebook did not open the archived chats view (landed on {at}); the archived list could not be read"
+            ));
         }
-        let list = v["chats"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .map(|c| Chat {
-                        path: c["href"].as_str().unwrap_or("").to_string(),
-                        name: c["name"].as_str().unwrap_or("").to_string(),
-                        preview: c["preview"].as_str().unwrap_or("").to_string(),
-                        time: c["time"].as_str().unwrap_or("").to_string(),
-                        unread: c["unread"] == Value::Bool(true),
-                        group: c["group"] == Value::Bool(true),
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        Ok((list, v["complete"] == Value::Bool(true)))
+        scan_open_list(b, &t, n).await
     }
     .await;
     b.release_as(t, if r.is_ok() { "messages" } else { "" })
@@ -209,7 +236,7 @@ pub fn trunc(s: &str, n: usize) -> String {
 }
 
 pub async fn chats(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
-    let a = crate::ops::parse(args, &[], &["unread"])?;
+    let a = crate::ops::parse(args, &[], &["unread", "archived"])?;
     let n = a.n.unwrap_or(20);
     let only_unread = a.flag("unread");
     let q = (!a.pos.is_empty()).then(|| a.pos.join(" ").to_lowercase());
@@ -219,7 +246,12 @@ pub async fn chats(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
     } else {
         n.max(30)
     };
-    let (list, _complete) = chat_list(d, &b, want, Duration::ZERO).await?;
+    // archived chats are not in the inbox cache: always a fresh scan of the archived view
+    let (list, _complete) = if a.flag("archived") {
+        fetch_archived_chats(&b, want).await?
+    } else {
+        chat_list(d, &b, want, Duration::ZERO).await?
+    };
     let mut shown = 0;
     for c in list {
         if only_unread && !c.unread {
