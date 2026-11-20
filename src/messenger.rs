@@ -433,11 +433,14 @@ async fn open_thread(b: &std::sync::Arc<Browser>, t: &Tab, path: &str) -> Res<()
 }
 
 pub async fn read(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
-    let a = crate::ops::parse(args, &[], &[])?;
-    let n = a.n.unwrap_or(20);
+    let a = crate::ops::parse(args, &[], &["all"])?;
+    let all = a.flag("all");
+    // --all: ask the page for everything; it scrolls to the start of the
+    // conversation and reports whether it really got there (see msg.js)
+    let n = if all { 1_000_000 } else { a.n.unwrap_or(20) };
     let spec = a.pos.join(" ");
     if spec.is_empty() {
-        return Err("usage: read <chat> [-n N]".into());
+        return Err("usage: read <chat> [-n N] [--all]".into());
     }
     let spec = spec.as_str();
     let b = d.browser(out).await?;
@@ -480,6 +483,15 @@ pub async fn read(d: &Daemon, args: &[String], out: &Out) -> Res<()> {
                 m["from"].as_str().unwrap_or("?"),
                 text
             ));
+        }
+        if all {
+            // a #-line like the date breaks: callers showing a message list
+            // can tell a full history from a budget-stopped one
+            out.line(if v["complete"] == Value::Bool(true) {
+                "# all"
+            } else {
+                "# more"
+            });
         }
         Ok(())
     }

@@ -22,7 +22,7 @@ READ
   notifs [-n 15]                     time, !=unread, text, ref
 MESSENGER
   chats [-n 20] [--unread] [name]    ref, flags(! unread, g group, e e2ee), time, name, preview
-  read <chat> [-n 20]                `# date` lines, then `HH:MM sender: text` ([img] [file], {emoji} reactions)
+  read <chat> [-n 20] [--all]        `# date` lines, then `HH:MM sender: text` ([img] [file], {emoji} reactions); --all reads to the start of the conversation and ends with `# all` (or `# more` when it had to stop early)
   send <chat> <text> [--file path]... [--dry]   file or image, 25MB max each, one message per file then the text. Options BEFORE `--`; after `--` is text. Name must match exactly (or use ref / --fuzzy)
   unsend <chat> [--match text] [--dry]   remove your newest loaded message (containing text) for everyone
   msgreact <chat> <like|love|care|haha|wow|sad|angry> [--match text] [--nth n]   react to the newest message (or the nth newest containing text)
