@@ -25,6 +25,7 @@ MESSENGER
   read <chat> [-n 20] [--all]        `# date` lines, then `HH:MM sender: text` ([img] [file], {emoji} reactions); --all reads to the start of the conversation and ends with `# all` (or `# more` when it had to stop early)
   send <chat> <text> [--file path]... [--dry]   file or image, 25MB max each, one message per file then the text. Options BEFORE `--`; after `--` is text. Name must match exactly (or use ref / --fuzzy)
   unsend <chat> [--match text] [--dry]   remove your newest loaded message (containing text) for everyone
+  archive <chat> [--dry]             move a chat from the inbox to the archived view
   msgreact <chat> <like|love|care|haha|wow|sad|angry> [--match text] [--nth n]   react to the newest message (or the nth newest containing text)
   reply <chat> <text> --match text [--nth n] [--file path]...   reply to the (nth newest) message containing text (quotes it), then send like `send`
   unlock [-]                         once: restore end-to-end encrypted chats; PIN read from $FB_PIN or stdin

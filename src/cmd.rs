@@ -140,6 +140,7 @@ async fn run_inner(d: &Daemon, argv: &[String], _cwd: &str, out: &Out) -> Res<()
         "listing-message" => crate::act::listing_message(d, &argv[1..], out).await,
         "follow" => crate::act::follow(d, &argv[1..], out).await,
         "unsend" => crate::messenger::unsend(d, &argv[1..], out).await,
+        "archive" => crate::messenger::archive(d, &argv[1..], out).await,
         "msgreact" => crate::messenger::msgreact(d, &argv[1..], out).await,
         "reply" => crate::messenger::send(d, &argv[1..], _cwd, out).await,
         "unlock" => crate::messenger::unlock(d, &argv[1..], out).await,
