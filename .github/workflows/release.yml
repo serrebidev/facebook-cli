@@ -24,7 +24,7 @@ jobs:
           # No arm runner exists: the x86 Linux runner cross-builds aarch64. fb is pure
           # Rust (no C), so rust-lld links it against Rust's bundled musl.
           - { os: ubuntu-latest, target: aarch64-unknown-linux-musl, asset: fb-aarch64-linux }
-          - { os: macos-15, target: aarch64-apple-darwin, asset: fb-aarch64-darwin }
+          - { os: macos-26, target: aarch64-apple-darwin, asset: fb-aarch64-darwin }
           - { os: windows-latest, target: x86_64-pc-windows-msvc, asset: fb-x86_64-windows }
     runs-on: ${{ matrix.os }}
     env:
