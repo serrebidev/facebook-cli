@@ -774,7 +774,39 @@ console.log('js removed-newest ok');
   dlg.rects = 1;
   await assert.rejects(F5.focusComposer(), /dialog blocks input/);
   console.log('js focusComposer hidden dialog ok');
+
+  // Regression (BlindFB #24): archiveChat/deleteChat/chatMembers live in the
+  // unsend IIFE, which never destructured dismissRestore or scroller — every
+  // archive/delete call threw "ReferenceError: dismissRestore is not defined"
+  // and chatMembers would have thrown on scroller. They must reach F.* through
+  // the shared object like the rest of that IIFE (F.scroller, F.dismissRestore).
+  {
+    const F6 = { ...F, sleep: async () => {}, waitFor: async fn => fn(), dismissRestore: async () => true };
+    global.window = { __fb: F6 };
+    global.document = { body: {}, querySelectorAll: () => [], querySelector: () => null, dispatchEvent: () => {} };
+    new Function(fs.readFileSync(path.join(__dirname, '../js/msg.js'), 'utf8')).call(global.window);
+    assert.strictEqual(await F6.archiveChat('/messages/t/1/', false), 'no chat list', 'archiveChat must not throw ReferenceError');
+    assert.strictEqual(await F6.deleteChat('/messages/t/1/', false), 'no chat list', 'deleteChat must not throw ReferenceError');
+    console.log('js archive/delete scope ok');
+  }
+
+  // Regression (BlindFB #24): an archived view with nothing in it mounts a
+  // settled grid but never a row — chats() must report an empty list, not
+  // the "no chat list" error.
+  {
+    const emptyGrid = { querySelector: () => null, querySelectorAll: () => [], parentElement: null };
+    const F7 = { ...F, sleep: async () => {}, waitFor: async fn => fn(), dismissRestore: async () => true };
+    global.window = { __fb: F7 };
+    global.document = { body: {}, querySelectorAll: () => [], querySelector: s => (s === '[role=grid]' ? emptyGrid : null) };
+    new Function(fs.readFileSync(path.join(__dirname, '../js/msg.js'), 'utf8')).call(global.window);
+    const res = await F7.chats(20);
+    assert.deepStrictEqual(res, { chats: [], complete: true }, 'empty settled grid is an empty list');
+    console.log('js chats empty grid ok');
+  }
+
 }).catch(e => { console.error(e); process.exit(1); });
+
+
 
 // events: hidden links never count toward n, a labelled action link is no detail, a name split across spans stays whole,
 // a second link's first line is a detail, and details that render later are merged in

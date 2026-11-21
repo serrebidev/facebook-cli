@@ -89,8 +89,15 @@
  };
  F.chats=async n=>{
   await dismissRestore();
-  const g=await waitFor(async()=>{await dismissRestore();const g=document.querySelector('[role=grid]');return g&&g.querySelector('[role=row] a[href*="/t/"]')&&g},15000);
-  if(!g)return {err:'no chat list'};
+  let g=await waitFor(async()=>{await dismissRestore();const g=document.querySelector('[role=grid]');return g&&g.querySelector('[role=row] a[href*="/t/"]')&&g},15000);
+  if(!g){
+   // A view with nothing in it (an archived list nobody has archived into yet)
+   // mounts the grid but never a row: that is an empty list, not a broken page.
+   // Only a settled grid counts — one still loading may yet grow its rows.
+   const empty=await waitFor(()=>{const e=document.querySelector('[role=grid]');return e&&!F.pageLoading(e)&&e},5000);
+   if(empty)return {chats:[],complete:true};
+   return {err:'no chat list'};
+  }
   const sc=scroller(g)||g.parentElement;
   if(sc){sc.scrollTop=0;await sleep(400);}
   const atBottom=()=>!sc||sc.scrollTop+sc.clientHeight>=sc.scrollHeight-2;
@@ -495,14 +502,14 @@
  // callers confirm with the user before invoking it. The proof is the
  // row leaving the inbox list, same as archive.
  F.deleteChat=async(path,dry)=>{
-  await dismissRestore();
+  await F.dismissRestore();
   const g=await waitFor(()=>document.querySelector('[role=grid]'),10000);
   if(!g)return 'no chat list';
   const norm=p=>(p||'').replace(/\/$/,'');
   const rowOf=()=>[...g.querySelectorAll('[role=row]')].find(r=>{const a=r.querySelector('a[href*="/t/"]');return a&&norm(a.getAttribute('href'))===norm(path)});
   let row=rowOf();
   if(!row){
-   const sc=scroller(g)||g.parentElement;
+   const sc=F.scroller(g)||g.parentElement;
    const t0=Date.now();
    while(!row&&sc&&Date.now()-t0<20000){
     if(sc.scrollTop+sc.clientHeight>=sc.scrollHeight-2)break;
@@ -558,7 +565,7 @@
    F.press(toggle);
    await sleep(800);
   }
-  const sc=scroller(head)||region();
+  const sc=F.scroller(head)||region();
   if(sc&&sc.scrollTop!==undefined)sc.scrollTop=0;
   const seen=new Map();
   const collect=()=>{
@@ -591,14 +598,14 @@
  // Archive, then prove the row left the inbox. The row may sit below the
  // fold of a virtualized list, so scroll the list until it mounts.
  F.archiveChat=async(path,dry)=>{
-  await dismissRestore();
+  await F.dismissRestore();
   const g=await waitFor(()=>document.querySelector('[role=grid]'),10000);
   if(!g)return 'no chat list';
   const norm=p=>(p||'').replace(/\/$/,'');
   const rowOf=()=>[...g.querySelectorAll('[role=row]')].find(r=>{const a=r.querySelector('a[href*="/t/"]');return a&&norm(a.getAttribute('href'))===norm(path)});
   let row=rowOf();
   if(!row){
-   const sc=scroller(g)||g.parentElement;
+   const sc=F.scroller(g)||g.parentElement;
    const t0=Date.now();
    while(!row&&sc&&Date.now()-t0<20000){
     if(sc.scrollTop+sc.clientHeight>=sc.scrollHeight-2)break;
