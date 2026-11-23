@@ -1163,3 +1163,34 @@ console.log('js removed-newest ok');
   }
   console.log('js groupInvite ok');
 })().catch(e => { console.error(e); process.exit(1); });
+
+// profile: a profile page whose layout never mounts a [role=tablist] must
+// still read — only the header h1 is guaranteed (BlindFB #28). Before the
+// fix this returned 'profile not found / not accessible' even when signed
+// in, which failed BlindFB's sign-in session verification.
+(async () => {
+  const vm = require('vm');
+  const nameEl = { children: [], innerText: 'Michal Suchy' };
+  const mainEl = {
+    querySelector: sel => (sel === 'h1' ? nameEl : null),
+    querySelectorAll: sel => (sel === 'h1,h2,span,div' ? [nameEl] : []),
+  };
+  const G = {
+    sleep: async () => {}, clean: s => String(s || '').trim(), vtext: () => [],
+    waitFor: async f => f() || null, canon: h => h, trunc: s => s,
+    groupPath: s => s, profilePath: s => s, TIME: /$^/, SPON: /$^/, ACT: /$^/,
+    scrollerOf: () => null, num: () => 0, pageLoading: () => false,
+  };
+  const ctx = vm.createContext({
+    window: { __fb: G },
+    document: { querySelector: sel => (sel === '[role=main]' ? mainEl : null), querySelectorAll: () => [], title: 'Michal Suchy' },
+    location: { href: 'https://www.facebook.com/profile.php?id=123' },
+    URL, Node: { DOCUMENT_POSITION_PRECEDING: 2 },
+    getComputedStyle: () => ({ fontSize: '28px' }),
+  });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../js/ops.js'), 'utf8'), ctx);
+  const out = await G.profile(0);
+  assert(!out.err, 'profile without tablist should read, got: ' + (out && out.err));
+  assert(out.lines.some(l => l.startsWith('name\tMichal Suchy')), 'profile name line missing: ' + JSON.stringify(out.lines));
+  console.log('js profile no-tablist ok');
+})().catch(e => { console.error(e); process.exit(1); });

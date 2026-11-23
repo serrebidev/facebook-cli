@@ -266,7 +266,11 @@
   return {rows:rows.map(r=>r.v)};
  };
  F.profile=async(n)=>{
-  const m=await waitFor(()=>{const m=main();return m&&m.querySelector('[role=tablist]')&&m},15000);
+  // A profile header (h1) is enough: some profile layouts never mount a
+  // [role=tablist], and everything below already tolerates a missing one.
+  // Requiring the tablist hard-failed `profile me` — and with it BlindFB's
+  // sign-in session verification — on those profiles (BlindFB #28).
+  const m=await waitFor(()=>{const m=main();return m&&(m.querySelector('[role=tablist]')||m.querySelector('h1'))&&m},15000);
   if(!m)return {err:'profile not found / not accessible'};
   await sleep(700);
   const lines=[];
