@@ -150,9 +150,9 @@ try{
   // the user can act on and must not be listed at all.
   await evaluate('localStorage.linklessFeed="true";JSON.stringify(true)');
   try{
-   const output=await fb('feed','--refresh','-n','5');
+   const output=await fb('feed','--refresh','-n','1');
    assert(!output.includes('Sponsored fixture post'),'link-less card is not listed');
-   assert(output.trim().length>0,'ordinary posts still list');
+   assert(output.includes('Existing profile post'),'ordinary posts still list');
   }finally{await evaluate('localStorage.removeItem("linklessFeed");JSON.stringify(true)')}
  });
  await check('PIN modal send is single and confirmed in three locales',async()=>{for(const locale of ['en','vi','fr']){

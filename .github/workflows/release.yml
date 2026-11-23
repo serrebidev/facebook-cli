@@ -16,7 +16,6 @@ jobs:
   verify:
     uses: ./.github/workflows/ci.yml
   build:
-    needs: verify
     strategy:
       matrix:
         include:
@@ -30,7 +29,7 @@ jobs:
     env:
       CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: rust-lld
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -46,7 +45,7 @@ jobs:
       - if: runner.os == 'Windows'
         shell: pwsh
         run: Compress-Archive -Path target/${{ matrix.target }}/release/fb.exe,LICENSE,LICENSE-APACHE-2.0,THIRD_PARTY_NOTICES -DestinationPath ${{ matrix.asset }}.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.asset }}
           path: |
@@ -59,10 +58,10 @@ jobs:
         continue-on-error: true
         run: cargo clean
   publish:
-    needs: build
+    needs: [verify, build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           pattern: fb-*
@@ -100,8 +99,9 @@ jobs:
             name="$(basename "$file")"
             old="$(echo "$release" | jq -r --arg n "$name" '.assets[]? | select(.name == $n) | .id')"
             [ -z "$old" ] || curl -sf -X DELETE -H "$h" "$api/releases/$id/assets/$old"
-            curl -sf -o /dev/null -H "$h" -F "attachment=@$file" "$api/releases/$id/assets?name=$name"
-            echo "Attached $name"
+            echo "Uploading $name ($(wc -c < "$file") bytes)"
+            curl -fsS -o /dev/null -w 'Upload complete: HTTP %{http_code}, TLS %{time_appconnect}s, request %{time_total}s\n' \
+              -H "$h" -F "attachment=@$file" "$api/releases/$id/assets?name=$name"
           done
           curl -sf -o /dev/null -X PATCH -H "$h" -H 'Content-Type: application/json' \
             -d '{"draft": false, "prerelease": false}' "$api/releases/$id"
