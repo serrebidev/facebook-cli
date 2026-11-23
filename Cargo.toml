@@ -10,7 +10,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "proce
 tokio-tungstenite = "0.30"
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 serde_json = "1"
-base64 = "0.22"
+base64 = "0.23"
 
 [profile.release]
 opt-level = 3
