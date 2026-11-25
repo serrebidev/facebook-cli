@@ -983,6 +983,91 @@ console.log('js removed-newest ok');
     console.log('js openArchived long row lag ok');
   }
 
+  // Regression (BlindFB #30, third report): the page can keep BOTH grids
+  // mounted — the inbox grid stays in the document, first in order, while
+  // the archived view's grid mounts beside it. Every first-grid lookup
+  // then reads the inbox forever: the row-replacement wait can never pass
+  // and a scan returns the inbox. The archived grid must be found by its
+  // own label, and an archived scan must read that grid only.
+  {
+    const state = { menuOpen: false, view: 'inbox' };
+    const settingsBtn = { getAttribute: s => (s === 'aria-label' ? 'Settings, help and more' : null), innerText: '' };
+    const archivedItem = { innerText: 'Archived chats', getAttribute: () => null };
+    const anchor = href => ({ getAttribute: s => (s === 'href' ? href : null) });
+    const gridWith = (label, hrefs) => ({
+      getAttribute: s => (s === 'aria-label' ? label : null),
+      querySelector: s => (s.includes('a[') ? anchor(hrefs[0]) : null),
+      querySelectorAll: s => (s === '[role=row] a[href*="/t/"]' ? hrefs.map(anchor) : []),
+    });
+    const inboxGrid = gridWith('Chats', ['/t/101/', '/t/102/']);
+    const archivedGridEl = gridWith('Archived chats', ['/t/901/']);
+    const F13 = {
+      ...F, sleep: async () => {}, dismissRestore: async () => true,
+      waitFor: async fn => {
+        for (let i = 0; i < 3; i++) {
+          const result = await fn();
+          if (result) return result;
+        }
+        return null;
+      },
+      visible: () => true,
+      press: el => {
+        if (el === settingsBtn) state.menuOpen = !state.menuOpen;
+        if (el === archivedItem) { state.view = 'archived'; state.menuOpen = false; }
+      },
+    };
+    global.window = { __fb: F13 };
+    global.document = {
+      body: {},
+      // document order is the trap: the inbox grid stays first throughout
+      querySelector: s => (s === '[role=grid]' ? inboxGrid : null),
+      querySelectorAll: s => {
+        if (s === '[role=grid]') return state.view === 'archived' ? [inboxGrid, archivedGridEl] : [inboxGrid];
+        if (s === 'button,[role=button]') return [settingsBtn];
+        if (s === '[role=menuitem]') return state.menuOpen ? [archivedItem] : [];
+        if (s === 'h1') return [{ innerText: state.view === 'archived' ? 'Archived chats' : 'Chats' }];
+        return [];
+      },
+    };
+    new Function(fs.readFileSync(path.join(__dirname, '../js/msg.js'), 'utf8')).call(global.window);
+    assert.deepStrictEqual(await F13.openArchived(), { ok: true }, 'openArchived finds the archived grid beside the mounted inbox grid');
+    assert.strictEqual(F13.archivedGrid(), archivedGridEl, 'the archived grid is identified by its label, not document order');
+    assert.strictEqual(F13.archivedArrived(), true, 'archivedArrived proves the pane with both grids mounted');
+    console.log('js openArchived two grids ok');
+  }
+
+  // Same regression, the scan itself: chats(n, true) reads the archived
+  // grid; chats(n) still reads the first (inbox) grid.
+  {
+    const row = (name, href) => ({
+      text: [name, 'hi', '·', '1h'],
+      querySelector: q => (q.includes('a[') ? { getAttribute: k => (k === 'href' ? href : null) } : null),
+    });
+    const gridWith = (label, rows) => ({
+      parentElement: null,
+      getAttribute: s => (s === 'aria-label' ? label : null),
+      scrollHeight: 100, clientHeight: 500, scrollTop: 0,
+      querySelector: () => true,
+      querySelectorAll: s => (s === '[role=row]' ? rows : []),
+    });
+    const inboxGrid = gridWith('Chats', [row('Inbox pal', '/t/101/')]);
+    const archivedGridEl = gridWith('Archived chats', [row('Archived pal', '/t/901/')]);
+    const F14 = { ...F, vtext: r => r.text, sleep: async () => {}, dismissRestore: async () => true };
+    global.window = { __fb: F14 };
+    global.document = {
+      body: {}, documentElement: {},
+      querySelector: s => (s === '[role=grid]' ? inboxGrid : null),
+      querySelectorAll: s => (s === '[role=grid]' ? [inboxGrid, archivedGridEl] : []),
+    };
+    global.getComputedStyle = () => ({ overflowY: 'auto', fontWeight: '400' });
+    new Function(fs.readFileSync(path.join(__dirname, '../js/msg.js'), 'utf8')).call(global.window);
+    const archived = await F14.chats(10, true);
+    assert.deepStrictEqual(archived.chats.map(c => c.href), ['/t/901/'], 'an archived scan returns the archived grid rows only');
+    const inbox = await F14.chats(10);
+    assert.deepStrictEqual(inbox.chats.map(c => c.href), ['/t/101/'], 'an inbox scan still reads the first grid');
+    console.log('js chats archived grid ok');
+  }
+
   // Regression (BlindFB #30): Facebook can accept the PIN and still fail
   // the restore itself — "Messenger could not restore your history."
   // pinDone must surface that as a restore failure, never as success or
